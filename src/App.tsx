@@ -2,6 +2,7 @@ import { useState, useRef, useEffect, useCallback, useReducer, createContext, us
 import { useHubSocket } from "./useHubSocket";
 import type { ShotDetectedPayload } from "./useHubSocket";
 import { HubStatusDot, HubStatusBar } from "./HubStatus";
+import AddCourseScreen from "./AddCourseScreen";
 import {
   fetchCourses, createRound, updateRoundState, completeRound, fetchLatestActiveRound,
 } from "./lib/supabase";
@@ -529,6 +530,13 @@ function HomeScreen(){
   const [resumable,setResumable]=useState<RoundRow|null>(null);
   const [starting,setStarting]=useState(false);
 
+  const reloadCourses=useCallback(async()=>{
+    const list=await fetchCourses();
+    setLoadingCourses(false);
+    if(list.length===0) return;
+    setCourses(list);
+  },[]);
+
   useEffect(()=>{
     let alive=true;
     fetchCourses().then(list=>{
@@ -543,6 +551,10 @@ function HomeScreen(){
     return ()=>{alive=false;};
   // eslint-disable-next-line react-hooks/exhaustive-deps
   },[]);
+
+  useEffect(()=>{
+    if(state.view==="home") reloadCourses();
+  },[state.view,reloadCourses]);
 
   const selected=state.course;
 
@@ -613,10 +625,18 @@ function HomeScreen(){
 
         <div style={{background:"rgba(255,255,255,0.04)",borderRadius:10,padding:"14px 16px",width:"100%",
           border:"1px solid rgba(255,255,255,0.08)"}}>
-          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10,gap:8}}>
             <div style={{color:GOLD,fontFamily:"'IBM Plex Mono',monospace",fontSize:10,letterSpacing:1}}>COURSE</div>
-            <div style={{color:"#4B5563",fontFamily:"'IBM Plex Mono',monospace",fontSize:9,letterSpacing:1}}>
-              {loadingCourses?"LOADING...":`${courses.length} AVAILABLE`}
+            <div style={{display:"flex",alignItems:"center",gap:8}}>
+              <div style={{color:"#4B5563",fontFamily:"'IBM Plex Mono',monospace",fontSize:9,letterSpacing:1}}>
+                {loadingCourses?"LOADING...":`${courses.length} AVAILABLE`}
+              </div>
+              <button type="button" onClick={()=>dispatch({type:"SET_VIEW",v:"addCourse"})}
+                style={{padding:"4px 9px",borderRadius:4,border:`1px dashed ${GOLD}80`,
+                  background:"transparent",color:GOLD,
+                  fontFamily:"'IBM Plex Mono',monospace",fontSize:10,letterSpacing:1,cursor:"pointer"}}>
+                + ADD
+              </button>
             </div>
           </div>
           <div style={{display:"flex",flexDirection:"column",gap:6,maxHeight:220,overflowY:"auto"}}>
@@ -857,9 +877,13 @@ export default function App(){
       <style>{CSS}</style>
       <PersistenceBridge/>
       <div className="app">
-        {state.view==="home"   &&<HomeScreen/>}
-        {state.view==="round"  &&<RoundScreen/>}
-        {state.view==="review" &&<ReviewScreen/>}
+        {state.view==="home"      &&<HomeScreen/>}
+        {state.view==="addCourse" &&<AddCourseScreen
+          onCancel={()=>dispatch({type:"SET_VIEW",v:"home"})}
+          onSaved={(c)=>{ dispatch({type:"SET_COURSE",course:c}); dispatch({type:"SET_VIEW",v:"home"}); }}
+        />}
+        {state.view==="round"     &&<RoundScreen/>}
+        {state.view==="review"    &&<ReviewScreen/>}
       </div>
     </Ctx.Provider>
   );

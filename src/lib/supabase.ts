@@ -28,6 +28,43 @@ export interface Course {
   source: string;
 }
 
+export async function createCourse(args: {
+  name: string;
+  location: string;
+  holes: Hole[];
+}): Promise<Course | null> {
+  const device_id = getDeviceId();
+  const slug =
+    args.name
+      .toLowerCase()
+      .trim()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/(^-|-$)/g, "")
+      .slice(0, 40) +
+    "-" +
+    Math.random().toString(36).slice(2, 6);
+
+  const { data, error } = await supabase
+    .from("courses")
+    .insert({
+      slug,
+      name: args.name,
+      location: args.location,
+      total_holes: args.holes.length,
+      holes: args.holes,
+      source: "user",
+      device_id,
+    })
+    .select("id, slug, name, location, total_holes, holes, source")
+    .maybeSingle();
+
+  if (error) {
+    console.warn("[supabase] createCourse failed:", error.message);
+    return null;
+  }
+  return data as Course | null;
+}
+
 export async function fetchCourses(): Promise<Course[]> {
   const { data, error } = await supabase
     .from("courses")
