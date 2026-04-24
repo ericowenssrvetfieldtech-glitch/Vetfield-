@@ -520,6 +520,74 @@ function StatsPanel(){
   );
 }
 
+// ── INSTALL BUTTON (PWA) ──────────────────────────────────────────────────────
+interface BIPEvent extends Event { prompt: () => Promise<void>; userChoice: Promise<{outcome:"accepted"|"dismissed"}>; }
+
+function InstallButton(){
+  const [deferred,setDeferred]=useState<BIPEvent|null>(null);
+  const [installed,setInstalled]=useState(false);
+  const [showIOSHelp,setShowIOSHelp]=useState(false);
+
+  useEffect(()=>{
+    const isStandalone=window.matchMedia("(display-mode: standalone)").matches
+      || (navigator as unknown as {standalone?:boolean}).standalone===true;
+    if(isStandalone) setInstalled(true);
+
+    const onPrompt=(e:Event)=>{ e.preventDefault(); setDeferred(e as BIPEvent); };
+    const onInstalled=()=>{ setInstalled(true); setDeferred(null); };
+
+    window.addEventListener("beforeinstallprompt",onPrompt);
+    window.addEventListener("appinstalled",onInstalled);
+    return ()=>{
+      window.removeEventListener("beforeinstallprompt",onPrompt);
+      window.removeEventListener("appinstalled",onInstalled);
+    };
+  },[]);
+
+  const isIOS=/iPhone|iPad|iPod/.test(navigator.userAgent) && !(navigator as unknown as {standalone?:boolean}).standalone;
+
+  if(installed) return (
+    <div style={{color:"#34D399",fontFamily:"'IBM Plex Mono',monospace",fontSize:11,letterSpacing:1,display:"flex",alignItems:"center",gap:6}}>
+      <span style={{width:7,height:7,borderRadius:"50%",background:"#34D399"}}/> INSTALLED
+    </div>
+  );
+
+  const handleClick=async()=>{
+    if(deferred){
+      await deferred.prompt();
+      const res=await deferred.userChoice;
+      if(res.outcome==="accepted") setInstalled(true);
+      setDeferred(null);
+    } else if(isIOS){
+      setShowIOSHelp(h=>!h);
+    } else {
+      setShowIOSHelp(h=>!h);
+    }
+  };
+
+  return(
+    <div style={{width:"100%",display:"flex",flexDirection:"column",gap:8}}>
+      <button type="button" onClick={handleClick}
+        style={{width:"100%",padding:"11px 14px",borderRadius:8,
+          border:`1px solid ${GOLD}60`,background:"rgba(200,150,12,0.08)",
+          color:GOLD,fontFamily:"'Rajdhani',sans-serif",fontWeight:700,fontSize:14,letterSpacing:1.5,
+          cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
+        INSTALL APP
+      </button>
+      {showIOSHelp && (
+        <div style={{background:"rgba(255,255,255,0.05)",border:"1px solid rgba(255,255,255,0.1)",
+          borderRadius:8,padding:"10px 12px",color:"#D1D5DB",fontSize:12,lineHeight:1.5}}>
+          {isIOS ? (
+            <>On iPhone or iPad: tap the <strong>Share</strong> icon in Safari, then choose <strong>Add to Home Screen</strong>.</>
+          ) : (
+            <>On desktop Chrome/Edge: click the <strong>install icon</strong> in the address bar, or use browser menu → <strong>Install VetField</strong>. On Android: open in Chrome and tap menu → <strong>Install app</strong>.</>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── HOME SCREEN ───────────────────────────────────────────────────────────────
 function HomeScreen(){
   const {state,dispatch}=useGame();
@@ -674,6 +742,8 @@ function HomeScreen(){
           onMouseUp={e=>(e.currentTarget.style.transform="scale(1)")}>
           {starting?"STARTING...":"START ROUND"}
         </button>
+
+        <InstallButton/>
 
         <div style={{display:"flex",alignItems:"center",gap:8,color:"#4B5563",fontSize:11,fontFamily:"'IBM Plex Mono',monospace"}}>
           <span>VetField Technologies</span>

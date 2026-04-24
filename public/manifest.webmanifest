@@ -1,0 +1,26 @@
+{
+  "name": "VetField SmartCart",
+  "short_name": "VetField",
+  "description": "Digital golf caddy with live UWB shot detection.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#050E1A",
+  "theme_color": "#1B3A6B",
+  "categories": ["sports", "navigation", "utilities"],
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-maskable.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "maskable"
+    }
+  ]
+}
