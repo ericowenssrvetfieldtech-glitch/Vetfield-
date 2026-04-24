@@ -1,0 +1,24 @@
+[Unit]
+Description=VetField Cart Hub Server
+After=network.target gpsd.service
+Wants=gpsd.service
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/opt/vetfield-hub
+ExecStart=/usr/bin/node /opt/vetfield-hub/hub-server.js
+Restart=on-failure
+RestartSec=5s
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=vetfield-hub
+
+# Start 5 seconds after boot to let the UWB module enumerate
+ExecStartPre=/bin/sleep 5
+
+Environment=WS_PORT=8765
+Environment=HTTP_PORT=8766
+
+[Install]
+WantedBy=multi-user.target
