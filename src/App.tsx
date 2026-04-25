@@ -10,7 +10,16 @@ import type { Course, RoundRow } from "./lib/supabase";
 
 // ── COLORS & CONSTANTS ────────────────────────────────────────────────────────
 const NAVY = "#1B3A6B", GREEN = "#2E7D32", GOLD = "#C8960C";
-const LIGHT_BLUE = "#60A5FA", LIGHT_GREEN = "#34D399";
+
+const PLAYER_KEYS = ["p1", "p2", "p3", "p4"] as const;
+type PlayerKey = typeof PLAYER_KEYS[number];
+
+const PLAYER_COLORS: Record<PlayerKey, string> = {
+  p1: "#60A5FA",  // blue
+  p2: "#34D399",  // green
+  p3: "#FB923C",  // orange
+  p4: "#F472B6",  // pink
+};
 
 const CLUBS = [
   { name:"Driver",  abbr:"DR", avg:230, color:"#1B3A6B" },
@@ -78,14 +87,17 @@ function recommendClub(yards: number, wind=0){
 }
 
 // ── STORE ─────────────────────────────────────────────────────────────────────
+type ShotRecord = {x:number;y:number;dist:number;ts:number};
+type ScoreRecord = {strokes:number;putts:number};
+
 type State = {
   view: string;
   panel: string;
   currentHole: number;
-  activePlayer: string;
-  round: {p1:string;p2:string;date:string} | null;
-  shots: {p1: Record<number, {x:number;y:number;dist:number;ts:number}[]>; p2: Record<number, {x:number;y:number;dist:number;ts:number}[]>};
-  scores: {p1: Record<number, {strokes:number;putts:number}>; p2: Record<number, {strokes:number;putts:number}>};
+  activePlayer: PlayerKey;
+  round: {players: string[]; date: string} | null;
+  shots: Record<PlayerKey, Record<number, ShotRecord[]>>;
+  scores: Record<PlayerKey, Record<number, ScoreRecord>>;
   wind: {mph:number;dir:string};
   teeColor: string;
   course: Course;
@@ -93,34 +105,40 @@ type State = {
 };
 type Action = {type:string;[key:string]:unknown};
 
+const emptyPlayerData = (): Record<PlayerKey, Record<number, never>> =>
+  ({ p1:{}, p2:{}, p3:{}, p4:{} });
+
 const Ctx = createContext<{state:State;dispatch:React.Dispatch<Action>}|null>(null);
 const init: State = {
   view:"home", panel:"map", currentHole:1, activePlayer:"p1",
-  round:null, shots:{p1:{},p2:{}}, scores:{p1:{},p2:{}},
+  round:null,
+  shots: emptyPlayerData() as Record<PlayerKey, Record<number, ShotRecord[]>>,
+  scores: emptyPlayerData() as Record<PlayerKey, Record<number, ScoreRecord>>,
   wind:{mph:8,dir:"SW"}, teeColor:"white",
   course: DEFAULT_COURSE, roundId: null,
 };
+
 function reducer(s: State, a: Action): State {
   switch(a.type){
     case "START":      return{...init,course:s.course,round:a.p as State["round"],view:"round",currentHole:1};
     case "SET_COURSE": return{...s,course:a.course as Course};
     case "SET_ROUND_ID": return{...s,roundId:a.id as string|null};
     case "HYDRATE":    return{...s,...(a.patch as Partial<State>)};
-    case "SET_HOLE":return{...s,currentHole:a.n as number};
-    case "SET_PLAYER":return{...s,activePlayer:a.p as string};
-    case "SET_PANEL": return{...s,panel:a.p as string};
-    case "SET_VIEW":  return{...s,view:a.v as string};
+    case "SET_HOLE":   return{...s,currentHole:a.n as number};
+    case "SET_PLAYER": return{...s,activePlayer:a.p as PlayerKey};
+    case "SET_PANEL":  return{...s,panel:a.p as string};
+    case "SET_VIEW":   return{...s,view:a.v as string};
     case "ADD_SHOT":{
-      const pl=a.pl as string,hn=a.hn as number,sh=a.sh as {x:number;y:number;dist:number;ts:number};
-      return{...s,shots:{...s.shots,[pl]:{...s.shots[pl as keyof typeof s.shots],[hn]:[...(s.shots[pl as keyof typeof s.shots][hn]||[]),sh]}}};
+      const pl=a.pl as PlayerKey,hn=a.hn as number,sh=a.sh as ShotRecord;
+      return{...s,shots:{...s.shots,[pl]:{...s.shots[pl],[hn]:[...(s.shots[pl][hn]||[]),sh]}}};
     }
     case "UNDO":{
-      const pl=a.pl as string,hn=a.hn as number;
-      return{...s,shots:{...s.shots,[pl]:{...s.shots[pl as keyof typeof s.shots],[hn]:(s.shots[pl as keyof typeof s.shots][hn]||[]).slice(0,-1)}}};
+      const pl=a.pl as PlayerKey,hn=a.hn as number;
+      return{...s,shots:{...s.shots,[pl]:{...s.shots[pl],[hn]:(s.shots[pl][hn]||[]).slice(0,-1)}}};
     }
     case "SCORE":{
-      const ex=s.scores[a.pl as keyof typeof s.scores][a.hn as number]||{strokes:0,putts:0};
-      return{...s,scores:{...s.scores,[a.pl as string]:{...s.scores[a.pl as keyof typeof s.scores],[a.hn as number]:{...ex,[a.f as string]:a.v}}}};
+      const ex=s.scores[a.pl as PlayerKey][a.hn as number]||{strokes:0,putts:0};
+      return{...s,scores:{...s.scores,[a.pl as string]:{...s.scores[a.pl as PlayerKey],[a.hn as number]:{...ex,[a.f as string]:a.v}}}};
     }
     case "WIND":    return{...s,wind:a.w as {mph:number;dir:string}};
     case "END":     return{...s,view:"review"};
@@ -130,6 +148,13 @@ function reducer(s: State, a: Action): State {
 }
 
 function useGame(){return useContext(Ctx)!;}
+
+// Returns the active player keys for the current round (p1...pN)
+function usePlayers(): PlayerKey[] {
+  const {state} = useGame();
+  const n = state.round?.players.length ?? 2;
+  return PLAYER_KEYS.slice(0, n);
+}
 
 // ── CSS ───────────────────────────────────────────────────────────────────────
 const CSS = `
@@ -148,9 +173,12 @@ type Hole = Course["holes"][number];
 
 function ShotMap({hole, ballPositions}: {hole: Hole; ballPositions?: Record<string, BallPositionPayload>}){
   const {state,dispatch}=useGame();
+  const players = usePlayers();
   const canvasRef=useRef<HTMLCanvasElement>(null);
-  const p1shots=state.shots.p1[hole.number]||[];
-  const p2shots=state.shots.p2[hole.number]||[];
+
+  const shotsByPlayer = Object.fromEntries(
+    players.map(pk => [pk, state.shots[pk][hole.number] || []])
+  );
 
   const draw=useCallback(()=>{
     const cv=canvasRef.current; if(!cv)return;
@@ -192,7 +220,7 @@ function ShotMap({hole, ballPositions}: {hole: Hole; ballPositions?: Record<stri
     ctx.fillStyle="rgba(239,68,68,0.2)"; ctx.beginPath(); ctx.arc(pin.x,pin.y,8,0,Math.PI*2); ctx.fill();
     ctx.fillStyle="#fff"; ctx.beginPath(); ctx.arc(pin.x,pin.y,4,0,Math.PI*2); ctx.fill();
 
-    const drawTrail=(shots: {x:number;y:number;dist:number;ts:number}[], col: string)=>{
+    const drawTrail=(shots: ShotRecord[], col: string)=>{
       if(!shots.length)return;
       for(let i=0;i<shots.length-1;i++){
         const a=p(shots[i]),b=p(shots[i+1]);
@@ -228,15 +256,16 @@ function ShotMap({hole, ballPositions}: {hole: Hole; ballPositions?: Record<stri
         }
       });
     };
-    drawTrail(p1shots,LIGHT_BLUE);
-    drawTrail(p2shots,LIGHT_GREEN);
+
+    players.forEach(pk => drawTrail(shotsByPlayer[pk] || [], PLAYER_COLORS[pk]));
 
     // Live UWB ball positions — pulsing dots on the map
     if(ballPositions){
-      const ballColors: Record<string,string>={ball1:LIGHT_BLUE,ball2:LIGHT_GREEN};
+      const ballToPlayer: Record<string, PlayerKey> = {ball1:"p1",ball2:"p2",ball3:"p3",ball4:"p4"};
       const now=Date.now();
       for(const [id,bp] of Object.entries(ballPositions)){
-        const col=ballColors[id]||"#FBBF24";
+        const pk = ballToPlayer[id] as PlayerKey | undefined;
+        const col = pk ? PLAYER_COLORS[pk] : "#FBBF24";
         const c=p(bp);
         const pulse=0.5+0.5*Math.sin((now%1200)/1200*Math.PI*2);
         const r=8+pulse*6;
@@ -265,11 +294,11 @@ function ShotMap({hole, ballPositions}: {hole: Hole; ballPositions?: Record<stri
     ctx.fillStyle="#fff"; ctx.font="bold 9px 'IBM Plex Mono',monospace";
     ctx.fillText(`PAR ${hole.par}  •  ${hole.yards}Y`,14,42);
 
-  },[hole,p1shots,p2shots,ballPositions]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[hole, JSON.stringify(shotsByPlayer), ballPositions, players]);
 
   useEffect(()=>{draw();},[draw]);
 
-  // Re-render at ~15fps when live ball positions are coming in (for pulse animation)
   useEffect(()=>{
     if(!ballPositions || Object.keys(ballPositions).length===0) return;
     let raf: number;
@@ -283,7 +312,7 @@ function ShotMap({hole, ballPositions}: {hole: Hole; ballPositions?: Record<stri
     const r=cv.getBoundingClientRect();
     const x=((e.clientX-r.left)/r.width);
     const y=((e.clientY-r.top)/r.height);
-    const shots=state.shots[state.activePlayer as keyof typeof state.shots][hole.number]||[];
+    const shots=state.shots[state.activePlayer][hole.number]||[];
     const prev=shots.length>0?shots[shots.length-1]:hole.tee;
     const dx=(x-prev.x)*hole.yards, dy=(y-prev.y)*hole.yards;
     const dist=Math.round(Math.sqrt(dx*dx+dy*dy));
@@ -294,11 +323,13 @@ function ShotMap({hole, ballPositions}: {hole: Hole; ballPositions?: Record<stri
     <div style={{position:"relative",width:"100%"}}>
       <canvas ref={canvasRef} width={580} height={440} onClick={handleTap}
         style={{width:"100%",height:440,cursor:"crosshair",borderRadius:8,border:"1px solid rgba(255,255,255,0.08)",display:"block"}}/>
-      <div style={{position:"absolute",bottom:8,right:8,display:"flex",gap:6}}>
-        {([["p1",state.round?.p1||"P1",LIGHT_BLUE],["p2",state.round?.p2||"P2",LIGHT_GREEN]] as [string,string,string][]).map(([k,n,c])=>(
-          <div key={k} style={{display:"flex",alignItems:"center",gap:5,background:"rgba(0,0,0,0.65)",borderRadius:4,padding:"3px 8px"}}>
-            <div style={{width:8,height:8,borderRadius:"50%",background:c}}/>
-            <span style={{color:"#fff",fontSize:10,fontFamily:"'IBM Plex Mono',monospace"}}>{n}</span>
+      <div style={{position:"absolute",bottom:8,right:8,display:"flex",gap:6,flexWrap:"wrap",justifyContent:"flex-end"}}>
+        {players.map(pk=>(
+          <div key={pk} style={{display:"flex",alignItems:"center",gap:5,background:"rgba(0,0,0,0.65)",borderRadius:4,padding:"3px 8px"}}>
+            <div style={{width:8,height:8,borderRadius:"50%",background:PLAYER_COLORS[pk]}}/>
+            <span style={{color:"#fff",fontSize:10,fontFamily:"'IBM Plex Mono',monospace"}}>
+              {state.round?.players[PLAYER_KEYS.indexOf(pk)]||pk.toUpperCase()}
+            </span>
           </div>
         ))}
       </div>
@@ -333,7 +364,7 @@ function ClubPanel({hole}: {hole: Hole}){
         </div>
         <input type="range" min={0} max={25} value={wind.mph}
           onChange={e=>dispatch({type:"WIND",w:{...wind,mph:+e.target.value}})}
-          style={{width:"100%",accentColor:LIGHT_BLUE}}/>
+          style={{width:"100%",accentColor:"#60A5FA"}}/>
         <div style={{display:"flex",justifyContent:"space-between",color:"#9CA3AF",fontSize:9,fontFamily:"'IBM Plex Mono',monospace",marginTop:3}}>
           <span>0</span><span style={{color:"#fff",fontWeight:700}}>{wind.mph} MPH {wind.dir}</span><span>25</span>
         </div>
@@ -413,53 +444,68 @@ function WindArrow({dir,mph}: {dir:string;mph:number}){
 // ── SCORECARD ────────────────────────────────────────────────────────────────
 function ScorecardPanel(){
   const {state,dispatch}=useGame();
+  const players = usePlayers();
   const course=state.course;
-  const p1t=Object.values(state.scores.p1).reduce((s,h)=>s+(h.strokes||0),0);
-  const p2t=Object.values(state.scores.p2).reduce((s,h)=>s+(h.strokes||0),0);
   const par=course.holes.reduce((s,h)=>s+h.par,0);
 
-  const upd=(pl: string,hn: number,delta: number)=>{
-    const cur=state.scores[pl as keyof typeof state.scores][hn]?.strokes||0;
+  const totals = players.map(pk =>
+    Object.values(state.scores[pk]).reduce((s,h)=>s+(h.strokes||0),0)
+  );
+
+  const upd=(pl: PlayerKey,hn: number,delta: number)=>{
+    const cur=state.scores[pl][hn]?.strokes||0;
     dispatch({type:"SCORE",pl,hn,f:"strokes",v:Math.max(0,cur+delta)});
   };
 
+  const nameOf = (pk: PlayerKey) => state.round?.players[PLAYER_KEYS.indexOf(pk)] || pk.toUpperCase();
+
+  // Dynamic grid: hole + par + N player columns
+  const cols = `48px 36px ${players.map(()=>"1fr").join(" ")}`;
+
   return(
     <div style={{display:"flex",flexDirection:"column",height:"100%"}}>
-      <div style={{display:"grid",gridTemplateColumns:"48px 36px 1fr 1fr",background:"#0F2444",padding:"7px 10px",
+      <div style={{display:"grid",gridTemplateColumns:cols,background:"#0F2444",padding:"7px 10px",
         borderRadius:"8px 8px 0 0",borderBottom:"1px solid rgba(255,255,255,0.1)",gap:4}}>
-        {["HOLE","PAR",state.round?.p1||"P1",state.round?.p2||"P2"].map((h,i)=>(
-          <div key={i} style={{color:"#93C5FD",fontFamily:"'IBM Plex Mono',monospace",fontSize:9,fontWeight:700,
-            letterSpacing:1,textAlign:i>1?"center":"left"}}>{h}</div>
+        {["HOLE","PAR",...players.map(nameOf)].map((h,i)=>(
+          <div key={i} style={{color:i>=2?PLAYER_COLORS[players[i-2]]:"#93C5FD",
+            fontFamily:"'IBM Plex Mono',monospace",fontSize:9,fontWeight:700,
+            letterSpacing:1,textAlign:i>1?"center":"left",
+            overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{h}</div>
         ))}
       </div>
       <div style={{flex:1,overflowY:"auto"}}>
         {course.holes.map((hole,idx)=>{
-          const p1s=state.scores.p1[hole.number]?.strokes;
-          const p2s=state.scores.p2[hole.number]?.strokes;
           const cur=state.currentHole===hole.number;
           return(
             <div key={hole.number} onClick={()=>dispatch({type:"SET_HOLE",n:hole.number})}
-              style={{display:"grid",gridTemplateColumns:"48px 36px 1fr 1fr",padding:"9px 10px",gap:4,
+              style={{display:"grid",gridTemplateColumns:cols,padding:"9px 10px",gap:4,
                 alignItems:"center",cursor:"pointer",
                 background:cur?"rgba(27,58,107,0.4)":idx%2===0?"rgba(255,255,255,0.025)":"transparent",
                 borderLeft:cur?`3px solid ${GOLD}`:"3px solid transparent",
                 borderBottom:"1px solid rgba(255,255,255,0.04)"}}>
               <div style={{fontFamily:"'IBM Plex Mono',monospace",color:cur?GOLD:"#fff",fontWeight:cur?700:400,fontSize:13}}>{hole.number}</div>
               <div style={{fontFamily:"'IBM Plex Mono',monospace",color:"#9CA3AF",fontSize:12}}>{hole.par}</div>
-              <ScoreCell strokes={p1s} par={hole.par} onI={()=>upd("p1",hole.number,1)} onD={()=>upd("p1",hole.number,-1)}/>
-              <ScoreCell strokes={p2s} par={hole.par} onI={()=>upd("p2",hole.number,1)} onD={()=>upd("p2",hole.number,-1)}/>
+              {players.map(pk=>{
+                const strokes=state.scores[pk][hole.number]?.strokes;
+                return(
+                  <ScoreCell key={pk} strokes={strokes} par={hole.par}
+                    color={PLAYER_COLORS[pk]}
+                    onI={()=>upd(pk,hole.number,1)}
+                    onD={()=>upd(pk,hole.number,-1)}/>
+                );
+              })}
             </div>
           );
         })}
       </div>
-      <div style={{display:"grid",gridTemplateColumns:"48px 36px 1fr 1fr",background:"#0F2444",padding:"9px 10px",gap:4,
+      <div style={{display:"grid",gridTemplateColumns:cols,background:"#0F2444",padding:"9px 10px",gap:4,
         borderRadius:"0 0 8px 8px",borderTop:`2px solid ${GOLD}55`}}>
         <div style={{color:GOLD,fontFamily:"'IBM Plex Mono',monospace",fontSize:10,fontWeight:700,letterSpacing:1,gridColumn:"1/3"}}>TOTAL</div>
         <div/>
-        {[p1t,p2t].map((t,i)=>{
-          const d=t-par;
+        {players.map((pk,i)=>{
+          const t=totals[i],d=t-par;
           const c=d<0?"#4CAF50":d>0?"#F87171":"#fff";
-          return <div key={i} style={{textAlign:"center",fontFamily:"'IBM Plex Mono',monospace",fontWeight:700,fontSize:15,color:c}}>
+          return <div key={pk} style={{textAlign:"center",fontFamily:"'IBM Plex Mono',monospace",fontWeight:700,fontSize:15,color:c}}>
             {t>0?t:"—"}{t>0&&d!==0&&<span style={{fontSize:10,marginLeft:3}}>({d>0?"+":""}{d})</span>}
           </div>;
         })}
@@ -468,14 +514,15 @@ function ScorecardPanel(){
   );
 }
 
-function ScoreCell({strokes,par,onI,onD}: {strokes:number|undefined;par:number;onI:()=>void;onD:()=>void}){
+function ScoreCell({strokes,par,color,onI,onD}: {strokes:number|undefined;par:number;color:string;onI:()=>void;onD:()=>void}){
   const info=strokes&&strokes>0?getScoreName(strokes,par):null;
-  const btn: React.CSSProperties={width:24,height:24,borderRadius:4,border:"none",background:"rgba(255,255,255,0.1)",
-    color:"#fff",fontSize:16,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0};
+  const btn: React.CSSProperties={width:22,height:22,borderRadius:4,border:"none",background:"rgba(255,255,255,0.1)",
+    color:"#fff",fontSize:14,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0};
   return(
-    <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:5}}>
+    <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:3}}>
       <button style={btn} onClick={e=>{e.stopPropagation();onD();}}>−</button>
-      <div style={{minWidth:30,textAlign:"center",fontFamily:"'IBM Plex Mono',monospace",fontWeight:700,fontSize:15,color:info?.c||"#4B5563"}}>
+      <div style={{minWidth:26,textAlign:"center",fontFamily:"'IBM Plex Mono',monospace",fontWeight:700,fontSize:14,
+        color:info?.c||color+"80"}}>
         {strokes&&strokes>0?strokes:"—"}
       </div>
       <button style={btn} onClick={e=>{e.stopPropagation();onI();}}>+</button>
@@ -486,59 +533,72 @@ function ScoreCell({strokes,par,onI,onD}: {strokes:number|undefined;par:number;o
 // ── STATS PANEL ──────────────────────────────────────────────────────────────
 function StatsPanel(){
   const {state}=useGame();
+  const players = usePlayers();
   const course=state.course;
-  const p1shots=Object.values(state.shots.p1).flat();
-  const p2shots=Object.values(state.shots.p2).flat();
-  const totalRounds=course.holes.length;
   const holesPlayed=Object.keys(state.scores.p1).length;
 
-  const avgDist=(shots: {dist:number}[])=>{
+  const avgDist=(shots: ShotRecord[])=>{
     const dists=shots.filter(s=>s.dist>0).map(s=>s.dist);
     return dists.length?Math.round(dists.reduce((a,b)=>a+b,0)/dists.length):0;
   };
-  const maxDist=(shots: {dist:number}[])=>shots.length?Math.max(...shots.map(s=>s.dist||0)):0;
+  const maxDist=(shots: ShotRecord[])=>shots.length?Math.max(...shots.map(s=>s.dist||0)):0;
+  const nameOf = (pk: PlayerKey) => state.round?.players[PLAYER_KEYS.indexOf(pk)] || pk.toUpperCase();
 
   return(
     <div style={{display:"flex",flexDirection:"column",gap:10,overflowY:"auto"}}>
       <div style={{color:"#93C5FD",fontFamily:"'IBM Plex Mono',monospace",fontSize:10,letterSpacing:1}}>
-        ROUND STATS — HOLES {holesPlayed}/{totalRounds}
+        ROUND STATS — HOLES {holesPlayed}/{course.holes.length}
       </div>
 
-      {([["p1",state.round?.p1||"Player 1",LIGHT_BLUE,p1shots],["p2",state.round?.p2||"Player 2",LIGHT_GREEN,p2shots]] as [string,string,string,{x:number;y:number;dist:number;ts:number}[]][]).map(([k,name,col,shots])=>(
-        <div key={k} style={{background:"rgba(255,255,255,0.04)",borderRadius:8,padding:"10px 12px",borderLeft:`3px solid ${col}`}}>
-          <div style={{color:col,fontFamily:"'IBM Plex Mono',monospace",fontSize:11,fontWeight:700,marginBottom:8}}>{name}</div>
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
-            {([
-              ["Total Shots",shots.length],
-              ["Avg Distance",avgDist(shots)>0?`${avgDist(shots)}y`:"—"],
-              ["Longest Shot",maxDist(shots)>0?`${maxDist(shots)}y`:"—"],
-              ["Holes Played",Object.keys(state.scores[k as keyof typeof state.scores]).filter(h=>state.scores[k as keyof typeof state.scores][+h]?.strokes>0).length],
-            ] as [string, string|number][]).map(([label,val])=>(
-              <div key={label} style={{background:"rgba(0,0,0,0.2)",borderRadius:5,padding:"7px 10px"}}>
-                <div style={{color:"#9CA3AF",fontSize:9,fontFamily:"'IBM Plex Mono',monospace",marginBottom:3}}>{label}</div>
-                <div style={{color:"#fff",fontSize:18,fontWeight:700,fontFamily:"'IBM Plex Mono',monospace"}}>{val||"—"}</div>
-              </div>
-            ))}
+      {players.map(pk=>{
+        const shots=Object.values(state.shots[pk]).flat();
+        const col=PLAYER_COLORS[pk];
+        return(
+          <div key={pk} style={{background:"rgba(255,255,255,0.04)",borderRadius:8,padding:"10px 12px",borderLeft:`3px solid ${col}`}}>
+            <div style={{color:col,fontFamily:"'IBM Plex Mono',monospace",fontSize:11,fontWeight:700,marginBottom:8}}>{nameOf(pk)}</div>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+              {([
+                ["Total Shots",shots.length],
+                ["Avg Distance",avgDist(shots)>0?`${avgDist(shots)}y`:"—"],
+                ["Longest Shot",maxDist(shots)>0?`${maxDist(shots)}y`:"—"],
+                ["Holes Played",Object.keys(state.scores[pk]).filter(h=>state.scores[pk][+h]?.strokes>0).length],
+              ] as [string, string|number][]).map(([label,val])=>(
+                <div key={label} style={{background:"rgba(0,0,0,0.2)",borderRadius:5,padding:"7px 10px"}}>
+                  <div style={{color:"#9CA3AF",fontSize:9,fontFamily:"'IBM Plex Mono',monospace",marginBottom:3}}>{label}</div>
+                  <div style={{color:"#fff",fontSize:18,fontWeight:700,fontFamily:"'IBM Plex Mono',monospace"}}>{val||"—"}</div>
+                </div>
+              ))}
+            </div>
           </div>
-        </div>
-      ))}
+        );
+      })}
 
       <div>
         <div style={{color:"#93C5FD",fontFamily:"'IBM Plex Mono',monospace",fontSize:10,letterSpacing:1,marginBottom:8}}>SCORE VS PAR</div>
         {course.holes.map(hole=>{
-          const p1s=state.scores.p1[hole.number]?.strokes;
-          const p2s=state.scores.p2[hole.number]?.strokes;
-          const maxScore=Math.max(p1s||0,p2s||0,hole.par+2);
+          const scores = players.map(pk => state.scores[pk][hole.number]?.strokes);
+          const maxScore = Math.max(...scores.map(s=>s||0), hole.par+2);
           return(
             <div key={hole.number} style={{marginBottom:6}}>
               <div style={{display:"flex",justifyContent:"space-between",color:"#9CA3AF",fontSize:9,fontFamily:"'IBM Plex Mono',monospace",marginBottom:3}}>
                 <span>Hole {hole.number} (Par {hole.par})</span>
-                <span>{p1s?`P1:${p1s}`:""}{p1s&&p2s?" · ":""}{p2s?`P2:${p2s}`:""}</span>
+                <span>{players.map((pk,i)=>scores[i]?`${nameOf(pk).slice(0,3)}:${scores[i]}`:"").filter(Boolean).join(" · ")}</span>
               </div>
               <div style={{height:6,background:"rgba(255,255,255,0.06)",borderRadius:3,position:"relative"}}>
                 <div style={{position:"absolute",left:`${(hole.par/maxScore)*100}%`,top:0,width:1,height:"100%",background:GOLD,opacity:0.6}}/>
-                {p1s&&<div style={{position:"absolute",left:0,top:0,height:"100%",width:`${(p1s/maxScore)*100}%`,background:LIGHT_BLUE,borderRadius:3,opacity:0.7}}/>}
-                {p2s&&<div style={{position:"absolute",left:0,bottom:0,height:"50%",width:`${(p2s/maxScore)*100}%`,background:LIGHT_GREEN,borderRadius:3,opacity:0.7}}/>}
+                {players.map((pk,i)=>{
+                  const s=scores[i];
+                  if(!s) return null;
+                  const topPct = i/(players.length);
+                  const heightPct = 1/players.length;
+                  return <div key={pk} style={{
+                    position:"absolute",left:0,
+                    top:`${topPct*100}%`,
+                    height:`${heightPct*100}%`,
+                    width:`${(s/maxScore)*100}%`,
+                    background:PLAYER_COLORS[pk],borderRadius:3,opacity:0.7
+                  }}/>;
+                })}
               </div>
             </div>
           );
@@ -554,7 +614,7 @@ interface BIPEvent extends Event { prompt: () => Promise<void>; userChoice: Prom
 function InstallButton(){
   const [deferred,setDeferred]=useState<BIPEvent|null>(null);
   const [installed,setInstalled]=useState(false);
-  const [showIOSHelp,setShowIOSHelp]=useState(false);
+  const [showHelp,setShowHelp]=useState(false);
 
   useEffect(()=>{
     const isStandalone=window.matchMedia("(display-mode: standalone)").matches
@@ -586,10 +646,8 @@ function InstallButton(){
       const res=await deferred.userChoice;
       if(res.outcome==="accepted") setInstalled(true);
       setDeferred(null);
-    } else if(isIOS){
-      setShowIOSHelp(h=>!h);
     } else {
-      setShowIOSHelp(h=>!h);
+      setShowHelp(h=>!h);
     }
   };
 
@@ -602,13 +660,13 @@ function InstallButton(){
           cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
         INSTALL APP
       </button>
-      {showIOSHelp && (
+      {showHelp && (
         <div style={{background:"rgba(255,255,255,0.05)",border:"1px solid rgba(255,255,255,0.1)",
           borderRadius:8,padding:"10px 12px",color:"#D1D5DB",fontSize:12,lineHeight:1.5}}>
           {isIOS ? (
             <>On iPhone or iPad: tap the <strong>Share</strong> icon in Safari, then choose <strong>Add to Home Screen</strong>.</>
           ) : (
-            <>On desktop Chrome/Edge: click the <strong>install icon</strong> in the address bar, or use browser menu → <strong>Install VetField</strong>. On Android: open in Chrome and tap menu → <strong>Install app</strong>.</>
+            <>On desktop Chrome/Edge: click the <strong>install icon</strong> in the address bar. On Android: open in Chrome and tap menu → <strong>Install app</strong>.</>
           )}
         </div>
       )}
@@ -619,8 +677,8 @@ function InstallButton(){
 // ── HOME SCREEN ───────────────────────────────────────────────────────────────
 function HomeScreen(){
   const {state,dispatch}=useGame();
-  const [p1,setP1]=useState("Eric");
-  const [p2,setP2]=useState("Player 2");
+  const [playerCount,setPlayerCount]=useState(2);
+  const [names,setNames]=useState(["Eric","Player 2","Player 3","Player 4"]);
   const [courses,setCourses]=useState<Course[]>([state.course]);
   const [loadingCourses,setLoadingCourses]=useState(true);
   const [resumable,setResumable]=useState<RoundRow|null>(null);
@@ -654,15 +712,22 @@ function HomeScreen(){
 
   const selected=state.course;
 
+  const setName=(i: number, v: string)=>{
+    setNames(prev=>{ const n=[...prev]; n[i]=v; return n; });
+  };
+
   const handleStart=async()=>{
     if(starting) return;
     setStarting(true);
-    const round={p1:p1||"P1",p2:p2||"P2",date:new Date().toLocaleDateString()};
+    const activePlayers = names.slice(0, playerCount).map((n,i) => n || `Player ${i+1}`);
+    const round = { players: activePlayers, date: new Date().toLocaleDateString() };
     const snapshot={...init,course:selected,round,view:"round",currentHole:1};
     const row=await createRound({
       course:selected,
-      player1_name:round.p1,
-      player2_name:round.p2,
+      player1_name: activePlayers[0] || "",
+      player2_name: activePlayers[1] || "",
+      player3_name: activePlayers[2] || "",
+      player4_name: activePlayers[3] || "",
       state:snapshot as unknown as Record<string,unknown>,
     });
     dispatch({type:"START",p:round});
@@ -676,6 +741,8 @@ function HomeScreen(){
     dispatch({type:"HYDRATE",patch:{...saved,roundId:resumable.id,view:"round"}});
   };
 
+  const PLAYER_BORDER_COLORS = [PLAYER_COLORS.p1, PLAYER_COLORS.p2, PLAYER_COLORS.p3, PLAYER_COLORS.p4];
+
   return(
     <div style={{minHeight:"100vh",background:"radial-gradient(ellipse at 30% 20%, #0F2444 0%, #050E1A 60%)",
       display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
@@ -688,7 +755,7 @@ function HomeScreen(){
             background:`linear-gradient(135deg, #fff 30%, ${GOLD})`,WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent"}}>
             VetField
           </div>
-          <div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:14,color:LIGHT_BLUE,letterSpacing:3,marginTop:-2}}>
+          <div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:14,color:PLAYER_COLORS.p1,letterSpacing:3,marginTop:-2}}>
             SMARTCART
           </div>
         </div>
@@ -702,21 +769,44 @@ function HomeScreen(){
               <div style={{color:GOLD,fontFamily:"'IBM Plex Mono',monospace",fontSize:10,letterSpacing:1.5}}>RESUME ROUND</div>
               <div style={{color:"#fff",fontWeight:600,fontSize:15,marginTop:3}}>{resumable.course_name}</div>
               <div style={{color:"#9CA3AF",fontSize:11,fontFamily:"'IBM Plex Mono',monospace",marginTop:2}}>
-                {resumable.player1_name} vs {resumable.player2_name}
+                {[resumable.player1_name,resumable.player2_name,resumable.player3_name,resumable.player4_name]
+                  .filter(Boolean).join(" · ")}
               </div>
             </div>
             <div style={{color:GOLD,fontSize:22}}>▶</div>
           </button>
         )}
 
+        {/* Player count selector + names */}
         <div style={{background:"rgba(255,255,255,0.04)",borderRadius:12,padding:"18px 20px",width:"100%",border:"1px solid rgba(255,255,255,0.08)"}}>
-          <div style={{color:"#9CA3AF",fontFamily:"'IBM Plex Mono',monospace",fontSize:10,letterSpacing:1,marginBottom:12}}>PLAYER NAMES</div>
-          {([[p1,setP1,"p1"],[p2,setP2,"p2"]] as [string,React.Dispatch<React.SetStateAction<string>>,string][]).map(([v,sv,k],i)=>(
-            <input key={k} value={v} onChange={e=>sv(e.target.value)} placeholder={`Player ${i+1}`}
-              style={{width:"100%",padding:"10px 12px",borderRadius:6,background:"rgba(255,255,255,0.07)",
-                border:`1px solid ${i===0?`${LIGHT_BLUE}60`:`${LIGHT_GREEN}60`}`,color:"#fff",fontSize:16,
-                fontFamily:"'Rajdhani',sans-serif",outline:"none",marginBottom:8}}/>
-          ))}
+          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:14}}>
+            <div style={{color:"#9CA3AF",fontFamily:"'IBM Plex Mono',monospace",fontSize:10,letterSpacing:1}}>PLAYERS</div>
+            <div style={{display:"flex",gap:4}}>
+              {[1,2,3,4].map(n=>(
+                <button key={n} type="button" onClick={()=>setPlayerCount(n)}
+                  style={{width:36,height:30,borderRadius:6,border:"none",cursor:"pointer",
+                    fontFamily:"'IBM Plex Mono',monospace",fontWeight:700,fontSize:13,
+                    background:playerCount===n?NAVY:"rgba(255,255,255,0.07)",
+                    color:playerCount===n?"#fff":"#6B7280",
+                    outline:playerCount===n?`2px solid ${GOLD}60`:"none",
+                    transition:"all 0.15s"}}>
+                  {n}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div style={{display:"flex",flexDirection:"column",gap:8}}>
+            {Array.from({length:playerCount},(_,i)=>(
+              <div key={i} style={{display:"flex",alignItems:"center",gap:10}}>
+                <div style={{width:8,height:8,borderRadius:"50%",background:PLAYER_BORDER_COLORS[i],flexShrink:0}}/>
+                <input value={names[i]} onChange={e=>setName(i,e.target.value)}
+                  placeholder={`Player ${i+1}`}
+                  style={{flex:1,padding:"10px 12px",borderRadius:6,background:"rgba(255,255,255,0.07)",
+                    border:`1px solid ${PLAYER_BORDER_COLORS[i]}60`,color:"#fff",fontSize:16,
+                    fontFamily:"'Rajdhani',sans-serif",outline:"none"}}/>
+              </div>
+            ))}
+          </div>
         </div>
 
         <div style={{background:"rgba(255,255,255,0.04)",borderRadius:10,padding:"14px 16px",width:"100%",
@@ -785,26 +875,28 @@ function HomeScreen(){
 // ── ROUND SCREEN ─────────────────────────────────────────────────────────────
 function RoundScreen(){
   const {state,dispatch}=useGame();
+  const players = usePlayers();
   const course=state.course;
   const hole=course.holes.find(h=>h.number===state.currentHole)||course.holes[0];
-  const PANELS=[{id:"map",l:"⛳ Map"},{id:"club",l:"🏌 Club"},{id:"stats",l:"📊 Stats"},{id:"card",l:"📋 Card"}];
+  const PANELS=[{id:"map",l:"⛳ Map"},{id:"club",l:"🏌 Club"},{id:"stats",l:"Stats"},{id:"card",l:"Card"}];
 
-  // track whether we need to flash the shot indicator
   const [shotFlash, setShotFlash]=useState(false);
   const shotFlashTimer=useRef<ReturnType<typeof setTimeout>|null>(null);
 
+  const nameOf = (pk: PlayerKey) => state.round?.players[PLAYER_KEYS.indexOf(pk)] || pk.toUpperCase();
+
   const handleHubShot=useCallback((shot: ShotDetectedPayload)=>{
-    // auto-add the shot to the active player's trail on the current hole
+    // Map ballId to the player whose ball it is
+    const ballToPlayer: Record<string,PlayerKey> = {ball1:"p1",ball2:"p2",ball3:"p3",ball4:"p4"};
+    const targetPlayer = (shot.ballId && ballToPlayer[shot.ballId]) ? ballToPlayer[shot.ballId] : state.activePlayer;
     dispatch({
       type:"ADD_SHOT",
-      pl: state.activePlayer,
+      pl: targetPlayer,
       hn: state.currentHole,
       sh: { x: shot.x, y: shot.y, dist: shot.distance, ts: shot.ts },
     });
-    // auto-increment stroke count
-    dispatch({ type:"SCORE", pl: state.activePlayer, hn: state.currentHole, f:"strokes",
-      v: (state.scores[state.activePlayer as keyof typeof state.scores][state.currentHole]?.strokes||0)+1 });
-    // trigger flash
+    dispatch({ type:"SCORE", pl: targetPlayer, hn: state.currentHole, f:"strokes",
+      v: (state.scores[targetPlayer][state.currentHole]?.strokes||0)+1 });
     setShotFlash(true);
     if(shotFlashTimer.current) clearTimeout(shotFlashTimer.current);
     shotFlashTimer.current=setTimeout(()=>setShotFlash(false), 1400);
@@ -842,18 +934,20 @@ function RoundScreen(){
           </button>
         </div>
 
-        <div style={{display:"flex",alignItems:"center",gap:6}}>
-          {([["p1",LIGHT_BLUE],["p2",LIGHT_GREEN]] as [string,string][]).map(([p,c])=>(
-            <button key={p} onClick={()=>dispatch({type:"SET_PLAYER",p})}
-              style={{padding:"5px 9px",borderRadius:5,border:"none",cursor:"pointer",fontSize:10,fontFamily:"'IBM Plex Mono',monospace",
-                background:state.activePlayer===p?`${c}25`:"rgba(255,255,255,0.06)",
-                color:state.activePlayer===p?c:"#9CA3AF",
-                outline:state.activePlayer===p?`1px solid ${c}60`:"none"}}>
-              {p==="p1"?state.round?.p1||"P1":state.round?.p2||"P2"}
+        {/* Player selector */}
+        <div style={{display:"flex",alignItems:"center",gap:4,flexWrap:"wrap",justifyContent:"flex-end"}}>
+          {players.map(pk=>(
+            <button key={pk} onClick={()=>dispatch({type:"SET_PLAYER",p:pk})}
+              style={{padding:"4px 8px",borderRadius:5,border:"none",cursor:"pointer",fontSize:10,fontFamily:"'IBM Plex Mono',monospace",
+                background:state.activePlayer===pk?`${PLAYER_COLORS[pk]}25`:"rgba(255,255,255,0.06)",
+                color:state.activePlayer===pk?PLAYER_COLORS[pk]:"#9CA3AF",
+                outline:state.activePlayer===pk?`1px solid ${PLAYER_COLORS[pk]}60`:"none",
+                maxWidth:64,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
+              {nameOf(pk)}
             </button>
           ))}
           <button onClick={()=>dispatch({type:"UNDO",pl:state.activePlayer,hn:hole.number})}
-            style={{padding:"5px 9px",borderRadius:5,border:"none",background:"rgba(239,68,68,0.15)",
+            style={{padding:"4px 8px",borderRadius:5,border:"none",background:"rgba(239,68,68,0.15)",
               color:"#F87171",cursor:"pointer",fontSize:10,fontFamily:"'IBM Plex Mono',monospace"}}>↩</button>
         </div>
       </div>
@@ -879,13 +973,7 @@ function RoundScreen(){
         {state.panel==="card" &&<ScorecardPanel/>}
       </div>
 
-      {/* Dynamic status bar — hub-aware */}
-      {state.panel==="map" && hubStatus==="live"
-        ? <HubStatusBar status={hubStatus}/>
-        : state.panel==="map"
-          ? <HubStatusBar status={hubStatus}/>
-          : null
-      }
+      {state.panel==="map" && <HubStatusBar status={hubStatus}/>}
     </div>
   );
 }
@@ -893,10 +981,14 @@ function RoundScreen(){
 // ── REVIEW SCREEN ─────────────────────────────────────────────────────────────
 function ReviewScreen(){
   const {state,dispatch}=useGame();
+  const players = usePlayers();
   const course=state.course;
-  const p1t=Object.values(state.scores.p1).reduce((s,h)=>s+(h.strokes||0),0);
-  const p2t=Object.values(state.scores.p2).reduce((s,h)=>s+(h.strokes||0),0);
   const par=course.holes.reduce((s,h)=>s+h.par,0);
+  const nameOf = (pk: PlayerKey) => state.round?.players[PLAYER_KEYS.indexOf(pk)] || pk.toUpperCase();
+
+  const totals = players.map(pk =>
+    Object.values(state.scores[pk]).reduce((s,h)=>s+(h.strokes||0),0)
+  );
 
   return(
     <div style={{minHeight:"100vh",background:"#050E1A",padding:16,display:"flex",flexDirection:"column",gap:14}}>
@@ -906,16 +998,18 @@ function ReviewScreen(){
         <div style={{color:"#9CA3AF",fontSize:12,fontFamily:"'IBM Plex Mono',monospace"}}>{state.round?.date}</div>
       </div>
 
-      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
-        {([["p1",state.round?.p1||"P1",p1t,LIGHT_BLUE],["p2",state.round?.p2||"P2",p2t,LIGHT_GREEN]] as [string,string,number,string][]).map(([k,name,tot,col])=>{
-          const d=tot-par;
+      <div style={{display:"grid",gridTemplateColumns:`repeat(${Math.min(players.length,2)},1fr)`,gap:10}}>
+        {players.map((pk,i)=>{
+          const t=totals[i],d=t-par,col=PLAYER_COLORS[pk];
           return(
-            <div key={k} style={{background:"rgba(255,255,255,0.04)",borderRadius:10,padding:"14px 16px",
+            <div key={pk} style={{background:"rgba(255,255,255,0.04)",borderRadius:10,padding:"14px 16px",
               border:`1px solid ${col}30`,textAlign:"center"}}>
-              <div style={{color:col,fontFamily:"'IBM Plex Mono',monospace",fontSize:11,fontWeight:700,marginBottom:6}}>{name}</div>
-              <div style={{color:"#fff",fontSize:36,fontWeight:700,fontFamily:"'Rajdhani',sans-serif"}}>{tot||"—"}</div>
+              <div style={{color:col,fontFamily:"'IBM Plex Mono',monospace",fontSize:11,fontWeight:700,marginBottom:6}}>
+                {nameOf(pk)}
+              </div>
+              <div style={{color:"#fff",fontSize:36,fontWeight:700,fontFamily:"'Rajdhani',sans-serif"}}>{t||"—"}</div>
               <div style={{color:d<0?"#4CAF50":d>0?"#F87171":"#93C5FD",fontFamily:"'IBM Plex Mono',monospace",fontSize:12,marginTop:2}}>
-                {tot>0?(d===0?"Even":`${d>0?"+":""}${d}`):"—"}
+                {t>0?(d===0?"Even":`${d>0?"+":""}${d}`):"—"}
               </div>
             </div>
           );
@@ -946,7 +1040,6 @@ function PersistenceBridge(){
   const saveTimer=useRef<ReturnType<typeof setTimeout>|null>(null);
   const completedRef=useRef<string|null>(null);
 
-  // debounced auto-save while round is active
   useEffect(()=>{
     if(!state.roundId || state.view!=="round") return;
     if(saveTimer.current) clearTimeout(saveTimer.current);
@@ -956,7 +1049,6 @@ function PersistenceBridge(){
     return ()=>{ if(saveTimer.current) clearTimeout(saveTimer.current); };
   },[state]);
 
-  // mark round completed exactly once when entering review
   useEffect(()=>{
     if(state.view==="review" && state.roundId && completedRef.current!==state.roundId){
       completedRef.current=state.roundId;

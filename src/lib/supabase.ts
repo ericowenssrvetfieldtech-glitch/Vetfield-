@@ -88,6 +88,8 @@ export interface RoundRow {
   course_name: string;
   player1_name: string;
   player2_name: string;
+  player3_name: string;
+  player4_name: string;
   state: Record<string, unknown>;
   started_at: string;
   updated_at: string;
@@ -110,6 +112,8 @@ export async function createRound(args: {
   course: Course;
   player1_name: string;
   player2_name: string;
+  player3_name: string;
+  player4_name: string;
   state: Record<string, unknown>;
 }): Promise<RoundRow | null> {
   const device_id = getDeviceId();
@@ -121,6 +125,8 @@ export async function createRound(args: {
       course_name: args.course.name,
       player1_name: args.player1_name,
       player2_name: args.player2_name,
+      player3_name: args.player3_name,
+      player4_name: args.player4_name,
       state: args.state,
       status: "active",
     })
