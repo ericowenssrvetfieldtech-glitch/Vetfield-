@@ -8,7 +8,8 @@ const MAX_BACKOFF = 30000;
 export type HubStatus = "connecting" | "live" | "reconnecting" | "offline";
 
 export interface ShotDetectedPayload {
-  player: string;        // "p1" | "p2"
+  ballId: string;        // UWB tag ID from the hub (e.g. "ball1", "ball2")
+  player: string;        // "p1" | "p2" — app maps ballId to player
   hole: number;
   distance: number;      // yards
   x: number;             // normalized 0-1
@@ -17,10 +18,18 @@ export interface ShotDetectedPayload {
   ts: number;
 }
 
+export interface BallPositionPayload {
+  ballId: string;
+  x: number;             // normalized 0-1
+  y: number;             // normalized 0-1
+  ts: number;
+}
+
 interface HubState {
   status: HubStatus;
   latency: number | null;
   lastShot: ShotDetectedPayload | null;
+  ballPositions: Record<string, BallPositionPayload>;
 }
 
 type HubAction =
@@ -29,7 +38,8 @@ type HubAction =
   | { type: "RECONNECTING" }
   | { type: "OFFLINE" }
   | { type: "LATENCY"; ms: number }
-  | { type: "SHOT"; shot: ShotDetectedPayload };
+  | { type: "SHOT"; shot: ShotDetectedPayload }
+  | { type: "BALL_POS"; pos: BallPositionPayload };
 
 function hubReducer(s: HubState, a: HubAction): HubState {
   switch (a.type) {
@@ -39,6 +49,7 @@ function hubReducer(s: HubState, a: HubAction): HubState {
     case "OFFLINE":      return { ...s, status: "offline" };
     case "LATENCY":      return { ...s, latency: a.ms };
     case "SHOT":         return { ...s, lastShot: a.shot };
+    case "BALL_POS":     return { ...s, ballPositions: { ...s.ballPositions, [a.pos.ballId]: a.pos } };
     default:             return s;
   }
 }
@@ -54,6 +65,7 @@ export function useHubSocket({ activePlayer, currentHole, onShot }: UseHubSocket
     status: "connecting",
     latency: null,
     lastShot: null,
+    ballPositions: {},
   });
 
   const wsRef = useRef<WebSocket | null>(null);
@@ -112,6 +124,7 @@ export function useHubSocket({ activePlayer, currentHole, onShot }: UseHubSocket
       if (msg.type === "SHOT_DETECTED") {
         const raw = msg.payload as Partial<ShotDetectedPayload>;
         const shot: ShotDetectedPayload = {
+          ballId: raw.ballId ?? "ball1",
           player: raw.player ?? activePlayerRef.current,
           hole:   raw.hole   ?? currentHoleRef.current,
           distance: raw.distance ?? 0,
@@ -122,6 +135,13 @@ export function useHubSocket({ activePlayer, currentHole, onShot }: UseHubSocket
         };
         dispatch({ type: "SHOT", shot });
         onShotRef.current(shot);
+      }
+
+      if (msg.type === "BALL_POSITION") {
+        const raw = msg.payload as Partial<BallPositionPayload>;
+        if (raw.ballId && typeof raw.x === "number" && typeof raw.y === "number") {
+          dispatch({ type: "BALL_POS", pos: { ballId: raw.ballId, x: raw.x, y: raw.y, ts: raw.ts ?? Date.now() } });
+        }
       }
     };
 

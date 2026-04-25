@@ -20,5 +20,28 @@ ExecStartPre=/bin/sleep 5
 Environment=WS_PORT=8765
 Environment=HTTP_PORT=8766
 
+# ── UWB Configuration ──────────────────────────────────────────────────────
+# Serial port for UWB gateway (Qorvo DWM1001/DWM3000)
+# USB gateway: /dev/uwb-gateway0  (set up by udev rule in setup.sh)
+# Direct UART: /dev/uwb-uart
+Environment=UWB_PORT=/dev/uwb-gateway0
+Environment=UWB_BAUD=115200
+
+# "anchor" = full 2D position from anchor network (3+ anchors)
+# "tag"    = distance-only from single cart-mounted tag
+Environment=UWB_MODE=anchor
+
+# UWB tag IDs embedded in golf balls (comma-separated)
+Environment=BALL_IDS=ball1,ball2
+
+# Anchor positions in metres (for trilateration in tag mode)
+# Format: ANCHOR_POS_<ID>=<x_m>,<y_m>
+# Environment=ANCHOR_POS_A1=10,5
+# Environment=ANCHOR_POS_A2=80,10
+# Environment=ANCHOR_POS_A3=140,70
+
+# Set to "true" to generate synthetic shots (no hardware needed for testing)
+# Environment=SIMULATE=true
+
 [Install]
 WantedBy=multi-user.target

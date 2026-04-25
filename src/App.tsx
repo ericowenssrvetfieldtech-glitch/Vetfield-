@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback, useReducer, createContext, useContext } from "react";
 import { useHubSocket } from "./useHubSocket";
-import type { ShotDetectedPayload } from "./useHubSocket";
+import type { ShotDetectedPayload, BallPositionPayload } from "./useHubSocket";
 import { HubStatusDot, HubStatusBar } from "./HubStatus";
 import AddCourseScreen from "./AddCourseScreen";
 import {
@@ -146,7 +146,7 @@ const CSS = `
 // ── SHOT MAP ──────────────────────────────────────────────────────────────────
 type Hole = Course["holes"][number];
 
-function ShotMap({hole}: {hole: Hole}){
+function ShotMap({hole, ballPositions}: {hole: Hole; ballPositions?: Record<string, BallPositionPayload>}){
   const {state,dispatch}=useGame();
   const canvasRef=useRef<HTMLCanvasElement>(null);
   const p1shots=state.shots.p1[hole.number]||[];
@@ -231,6 +231,25 @@ function ShotMap({hole}: {hole: Hole}){
     drawTrail(p1shots,LIGHT_BLUE);
     drawTrail(p2shots,LIGHT_GREEN);
 
+    // Live UWB ball positions — pulsing dots on the map
+    if(ballPositions){
+      const ballColors: Record<string,string>={ball1:LIGHT_BLUE,ball2:LIGHT_GREEN};
+      const now=Date.now();
+      for(const [id,bp] of Object.entries(ballPositions)){
+        const col=ballColors[id]||"#FBBF24";
+        const c=p(bp);
+        const pulse=0.5+0.5*Math.sin((now%1200)/1200*Math.PI*2);
+        const r=8+pulse*6;
+        const g=ctx.createRadialGradient(c.x,c.y,0,c.x,c.y,r+8);
+        g.addColorStop(0,col+"90"); g.addColorStop(0.6,col+"30"); g.addColorStop(1,"transparent");
+        ctx.fillStyle=g; ctx.beginPath(); ctx.arc(c.x,c.y,r+8,0,Math.PI*2); ctx.fill();
+        ctx.fillStyle=col; ctx.strokeStyle="#fff"; ctx.lineWidth=2;
+        ctx.beginPath(); ctx.arc(c.x,c.y,6,0,Math.PI*2); ctx.fill(); ctx.stroke();
+        ctx.fillStyle="#000"; ctx.font="bold 7px monospace"; ctx.textAlign="center";
+        ctx.fillText(id.replace("ball","B"),c.x,c.y+2.5); ctx.textAlign="left";
+      }
+    }
+
     const tee=p(hole.tee);
     ctx.fillStyle="#fff"; ctx.strokeStyle=NAVY; ctx.lineWidth=2;
     ctx.beginPath(); ctx.arc(tee.x,tee.y,8,0,Math.PI*2); ctx.fill(); ctx.stroke();
@@ -246,9 +265,18 @@ function ShotMap({hole}: {hole: Hole}){
     ctx.fillStyle="#fff"; ctx.font="bold 9px 'IBM Plex Mono',monospace";
     ctx.fillText(`PAR ${hole.par}  •  ${hole.yards}Y`,14,42);
 
-  },[hole,p1shots,p2shots]);
+  },[hole,p1shots,p2shots,ballPositions]);
 
   useEffect(()=>{draw();},[draw]);
+
+  // Re-render at ~15fps when live ball positions are coming in (for pulse animation)
+  useEffect(()=>{
+    if(!ballPositions || Object.keys(ballPositions).length===0) return;
+    let raf: number;
+    const loop=()=>{ draw(); raf=requestAnimationFrame(loop); };
+    raf=requestAnimationFrame(loop);
+    return ()=>cancelAnimationFrame(raf);
+  },[ballPositions,draw]);
 
   const handleTap=useCallback((e: React.MouseEvent<HTMLCanvasElement>)=>{
     const cv=canvasRef.current; if(!cv)return;
@@ -782,7 +810,7 @@ function RoundScreen(){
     shotFlashTimer.current=setTimeout(()=>setShotFlash(false), 1400);
   },[dispatch, state.activePlayer, state.currentHole, state.scores]);
 
-  const { status: hubStatus, latency }=useHubSocket({
+  const { status: hubStatus, latency, ballPositions }=useHubSocket({
     activePlayer: state.activePlayer,
     currentHole:  state.currentHole,
     onShot:       handleHubShot,
@@ -845,7 +873,7 @@ function RoundScreen(){
 
       {/* Active panel */}
       <div style={{flex:1,padding:12,overflowY:"auto"}}>
-        {state.panel==="map"  &&<ShotMap hole={hole}/>}
+        {state.panel==="map"  &&<ShotMap hole={hole} ballPositions={ballPositions}/>}
         {state.panel==="club" &&<ClubPanel hole={hole}/>}
         {state.panel==="stats"&&<StatsPanel/>}
         {state.panel==="card" &&<ScorecardPanel/>}
