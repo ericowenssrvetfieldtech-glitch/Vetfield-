@@ -1,10 +1,10 @@
 import { useState, useRef, useEffect, useCallback, useReducer, createContext, useContext } from "react";
 import { useHubSocket } from "./useHubSocket";
-import type { ShotDetectedPayload, BallPositionPayload } from "./useHubSocket";
+import type { ShotDetectedPayload, BallPositionPayload, CartPayload } from "./useHubSocket";
 import { HubStatusDot, HubStatusBar } from "./HubStatus";
 import AddCourseScreen from "./AddCourseScreen";
 import {
-  fetchCourses, createRound, updateRoundState, completeRound, fetchLatestActiveRound,
+  fetchCourses, createRound, updateRoundState, completeRound, fetchLatestActiveRound, recordShot,
 } from "./lib/supabase";
 import type { Course, RoundRow } from "./lib/supabase";
 
@@ -171,7 +171,7 @@ const CSS = `
 // ── SHOT MAP ──────────────────────────────────────────────────────────────────
 type Hole = Course["holes"][number];
 
-function ShotMap({hole, ballPositions}: {hole: Hole; ballPositions?: Record<string, BallPositionPayload>}){
+function ShotMap({hole, ballPositions, cart}: {hole: Hole; ballPositions?: Record<string, BallPositionPayload>; cart?: CartPayload | null}){
   const {state,dispatch}=useGame();
   const players = usePlayers();
   const canvasRef=useRef<HTMLCanvasElement>(null);
@@ -259,6 +259,56 @@ function ShotMap({hole, ballPositions}: {hole: Hole; ballPositions?: Record<stri
 
     players.forEach(pk => drawTrail(shotsByPlayer[pk] || [], PLAYER_COLORS[pk]));
 
+    // Cart marker (with heading arrow + UWB ranging beams)
+    let cartCanvas: {x:number;y:number} | null = null;
+    if(cart && cart.canvasX!=null && cart.canvasY!=null){
+      cartCanvas = p({x: cart.canvasX, y: cart.canvasY});
+      const heading = cart.headingDeg ?? 0;
+      const ang = (heading - 90) * Math.PI / 180;  // canvas: 0deg = +x → rotate
+
+      // UWB ranging beams from cart to each ball
+      if(ballPositions){
+        for(const [,bp] of Object.entries(ballPositions)){
+          const c=p(bp);
+          ctx.strokeStyle="rgba(200,150,12,0.35)";
+          ctx.lineWidth=1; ctx.setLineDash([3,3]);
+          ctx.beginPath(); ctx.moveTo(cartCanvas.x,cartCanvas.y); ctx.lineTo(c.x,c.y); ctx.stroke();
+          ctx.setLineDash([]);
+        }
+      }
+
+      // Cart range halo (UWB coverage radius ~30m)
+      const haloR = 30 / 150 * Math.min(W, H);
+      const haloG = ctx.createRadialGradient(cartCanvas.x,cartCanvas.y,0,cartCanvas.x,cartCanvas.y,haloR);
+      haloG.addColorStop(0,"rgba(200,150,12,0.10)"); haloG.addColorStop(1,"transparent");
+      ctx.fillStyle=haloG; ctx.beginPath(); ctx.arc(cartCanvas.x,cartCanvas.y,haloR,0,Math.PI*2); ctx.fill();
+
+      // Cart body
+      ctx.save();
+      ctx.translate(cartCanvas.x,cartCanvas.y);
+      ctx.rotate(ang);
+      ctx.fillStyle="#0F2444";
+      ctx.strokeStyle=GOLD; ctx.lineWidth=2;
+      ctx.beginPath();
+      if(ctx.roundRect) ctx.roundRect(-9,-13,18,26,3); else ctx.rect(-9,-13,18,26);
+      ctx.fill(); ctx.stroke();
+      // Heading arrow
+      ctx.fillStyle=GOLD;
+      ctx.beginPath(); ctx.moveTo(0,-16); ctx.lineTo(6,-9); ctx.lineTo(-6,-9); ctx.closePath(); ctx.fill();
+      // Antenna dots (4 corners)
+      ctx.fillStyle="#fff";
+      [[-7,-10],[7,-10],[-7,10],[7,10]].forEach(([x,y])=>{
+        ctx.beginPath(); ctx.arc(x,y,1.8,0,Math.PI*2); ctx.fill();
+      });
+      ctx.restore();
+
+      // Cart label
+      ctx.fillStyle="rgba(0,0,0,0.7)";
+      ctx.fillRect(cartCanvas.x+12,cartCanvas.y-8,38,14);
+      ctx.fillStyle=GOLD; ctx.font="bold 9px 'IBM Plex Mono',monospace"; ctx.textAlign="left";
+      ctx.fillText("CART",cartCanvas.x+15,cartCanvas.y+2);
+    }
+
     // Live UWB ball positions — pulsing dots on the map
     if(ballPositions){
       const ballToPlayer: Record<string, PlayerKey> = {ball1:"p1",ball2:"p2",ball3:"p3",ball4:"p4"};
@@ -295,17 +345,18 @@ function ShotMap({hole, ballPositions}: {hole: Hole; ballPositions?: Record<stri
     ctx.fillText(`PAR ${hole.par}  •  ${hole.yards}Y`,14,42);
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  },[hole, JSON.stringify(shotsByPlayer), ballPositions, players]);
+  },[hole, JSON.stringify(shotsByPlayer), ballPositions, cart, players]);
 
   useEffect(()=>{draw();},[draw]);
 
   useEffect(()=>{
-    if(!ballPositions || Object.keys(ballPositions).length===0) return;
+    const hasLive = (ballPositions && Object.keys(ballPositions).length>0) || cart;
+    if(!hasLive) return;
     let raf: number;
     const loop=()=>{ draw(); raf=requestAnimationFrame(loop); };
     raf=requestAnimationFrame(loop);
     return ()=>cancelAnimationFrame(raf);
-  },[ballPositions,draw]);
+  },[ballPositions,cart,draw]);
 
   const handleTap=useCallback((e: React.MouseEvent<HTMLCanvasElement>)=>{
     const cv=canvasRef.current; if(!cv)return;
@@ -323,6 +374,16 @@ function ShotMap({hole, ballPositions}: {hole: Hole; ballPositions?: Record<stri
     <div style={{position:"relative",width:"100%"}}>
       <canvas ref={canvasRef} width={580} height={440} onClick={handleTap}
         style={{width:"100%",height:440,cursor:"crosshair",borderRadius:8,border:"1px solid rgba(255,255,255,0.08)",display:"block"}}/>
+      {cart && cart.lat!=null && (
+        <div style={{position:"absolute",top:8,right:8,background:"rgba(0,0,0,0.7)",
+          borderRadius:6,padding:"6px 10px",border:`1px solid ${GOLD}40`,
+          fontFamily:"'IBM Plex Mono',monospace",fontSize:9,color:"#fff",lineHeight:1.5}}>
+          <div style={{color:GOLD,fontWeight:700,letterSpacing:1}}>CART TELEMETRY</div>
+          <div>HDG {cart.headingDeg!=null?Math.round(cart.headingDeg):"—"}°</div>
+          <div>SPD {(cart.speedMps*2.237).toFixed(1)} mph</div>
+          <div style={{color:"#9CA3AF"}}>{cart.lat.toFixed(5)}, {cart.lng?.toFixed(5)}</div>
+        </div>
+      )}
       <div style={{position:"absolute",bottom:8,right:8,display:"flex",gap:6,flexWrap:"wrap",justifyContent:"flex-end"}}>
         {players.map(pk=>(
           <div key={pk} style={{display:"flex",alignItems:"center",gap:5,background:"rgba(0,0,0,0.65)",borderRadius:4,padding:"3px 8px"}}>
@@ -886,9 +947,9 @@ function RoundScreen(){
   const nameOf = (pk: PlayerKey) => state.round?.players[PLAYER_KEYS.indexOf(pk)] || pk.toUpperCase();
 
   const handleHubShot=useCallback((shot: ShotDetectedPayload)=>{
-    // Map ballId to the player whose ball it is
     const ballToPlayer: Record<string,PlayerKey> = {ball1:"p1",ball2:"p2",ball3:"p3",ball4:"p4"};
     const targetPlayer = (shot.ballId && ballToPlayer[shot.ballId]) ? ballToPlayer[shot.ballId] : state.activePlayer;
+    const shotIndex = (state.shots[targetPlayer][state.currentHole]?.length || 0) + 1;
     dispatch({
       type:"ADD_SHOT",
       pl: targetPlayer,
@@ -897,12 +958,31 @@ function RoundScreen(){
     });
     dispatch({ type:"SCORE", pl: targetPlayer, hn: state.currentHole, f:"strokes",
       v: (state.scores[targetPlayer][state.currentHole]?.strokes||0)+1 });
+
+    // Persist auto-detected shot to Supabase for analytics
+    if(state.roundId){
+      recordShot({
+        round_id: state.roundId,
+        ball_id: shot.ballId || "",
+        player_key: targetPlayer,
+        hole: state.currentHole,
+        shot_index: shotIndex,
+        x: shot.x, y: shot.y,
+        distance_yards: shot.distance,
+        gps_lat: shot.gps?.lat ?? null,
+        gps_lng: shot.gps?.lng ?? null,
+        cart_lat: shot.cart?.lat ?? null,
+        cart_lng: shot.cart?.lng ?? null,
+        cart_heading_deg: shot.cart?.headingDeg ?? null,
+      });
+    }
+
     setShotFlash(true);
     if(shotFlashTimer.current) clearTimeout(shotFlashTimer.current);
     shotFlashTimer.current=setTimeout(()=>setShotFlash(false), 1400);
-  },[dispatch, state.activePlayer, state.currentHole, state.scores]);
+  },[dispatch, state.activePlayer, state.currentHole, state.scores, state.shots, state.roundId]);
 
-  const { status: hubStatus, latency, ballPositions }=useHubSocket({
+  const { status: hubStatus, latency, ballPositions, cart }=useHubSocket({
     activePlayer: state.activePlayer,
     currentHole:  state.currentHole,
     onShot:       handleHubShot,
@@ -967,7 +1047,7 @@ function RoundScreen(){
 
       {/* Active panel */}
       <div style={{flex:1,padding:12,overflowY:"auto"}}>
-        {state.panel==="map"  &&<ShotMap hole={hole} ballPositions={ballPositions}/>}
+        {state.panel==="map"  &&<ShotMap hole={hole} ballPositions={ballPositions} cart={cart}/>}
         {state.panel==="club" &&<ClubPanel hole={hole}/>}
         {state.panel==="stats"&&<StatsPanel/>}
         {state.panel==="card" &&<ScorecardPanel/>}

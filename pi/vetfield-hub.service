@@ -14,33 +14,49 @@ StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=vetfield-hub
 
-# Start 5 seconds after boot to let the UWB module enumerate
+# Wait for UWB modules to enumerate
 ExecStartPre=/bin/sleep 5
 
 Environment=WS_PORT=8765
 Environment=HTTP_PORT=8766
 
-# ── UWB Configuration ──────────────────────────────────────────────────────
-# Serial port for UWB gateway (Qorvo DWM1001/DWM3000)
-# USB gateway: /dev/uwb-gateway0  (set up by udev rule in setup.sh)
-# Direct UART: /dev/uwb-uart
+# ── UWB Architecture ────────────────────────────────────────────────────────
+# "cart"   = antennas mounted on cart, ranging to ball tags (PRODUCTION)
+# "anchor" = fixed anchors around the hole, gateway sends absolute positions
+# "tag"    = single ranging tag, distance-only fallback
+Environment=UWB_MODE=cart
 Environment=UWB_PORT=/dev/uwb-gateway0
 Environment=UWB_BAUD=115200
 
-# "anchor" = full 2D position from anchor network (3+ anchors)
-# "tag"    = distance-only from single cart-mounted tag
-Environment=UWB_MODE=anchor
+# UWB tag IDs embedded in the golf balls
+Environment=BALL_IDS=ball1,ball2,ball3,ball4
 
-# UWB tag IDs embedded in golf balls (comma-separated)
-Environment=BALL_IDS=ball1,ball2
+# ── Cart antenna offsets (metres, cart frame, +x forward, +y left) ───────────
+# Default 3-antenna "T" pattern on cart roof:
+#   A1 front-left, A2 front-right, A3 rear-centre.
+# Override here to match your physical antenna mounting.
+Environment=ANT_OFFSET_A1=0.6,0.5
+Environment=ANT_OFFSET_A2=0.6,-0.5
+Environment=ANT_OFFSET_A3=-0.6,0.0
+# Optional 4th antenna for redundancy:
+# Environment=ANT_OFFSET_A4=0.0,0.0
 
-# Anchor positions in metres (for trilateration in tag mode)
-# Format: ANCHOR_POS_<ID>=<x_m>,<y_m>
-# Environment=ANCHOR_POS_A1=10,5
-# Environment=ANCHOR_POS_A2=80,10
-# Environment=ANCHOR_POS_A3=140,70
+# ── Heading source ───────────────────────────────────────────────────────────
+# Set IMU_ENABLE=true to use I2C magnetometer (HMC5883L / QMC5883L on /dev/i2c-1).
+# Otherwise heading is derived from GPS course-over-ground (only valid when
+# the cart is moving > 0.5 m/s).
+Environment=IMU_ENABLE=false
 
-# Set to "true" to generate synthetic shots (no hardware needed for testing)
+# ── Course frame anchor (calibrate per course) ──────────────────────────────
+# COURSE_LAT0/LNG0 = GPS coordinates of the (0,0) corner of the course bounding
+# box. COURSE_HEADING_DEG = compass bearing of the +x axis.
+# Update these when deploying to a new course.
+Environment=COURSE_LAT0=0
+Environment=COURSE_LNG0=0
+Environment=COURSE_HEADING_DEG=0
+Environment=FIELD_SIZE_M=150
+
+# ── Test mode (no hardware required) ────────────────────────────────────────
 # Environment=SIMULATE=true
 
 [Install]

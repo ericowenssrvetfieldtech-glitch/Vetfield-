@@ -169,6 +169,52 @@ export async function completeRound(roundId: string): Promise<void> {
   if (error) console.warn("[supabase] completeRound failed:", error.message);
 }
 
+// ── Shots ────────────────────────────────────────────────────────────────────
+export interface ShotInsert {
+  round_id: string;
+  ball_id: string;
+  player_key: string;
+  hole: number;
+  shot_index: number;
+  x: number;
+  y: number;
+  distance_yards: number;
+  gps_lat?: number | null;
+  gps_lng?: number | null;
+  cart_lat?: number | null;
+  cart_lng?: number | null;
+  cart_heading_deg?: number | null;
+}
+
+export async function recordShot(args: ShotInsert): Promise<void> {
+  const device_id = getDeviceId();
+  const { error } = await supabase.from("shots").insert({ ...args, device_id });
+  if (error) console.warn("[supabase] recordShot failed:", error.message);
+}
+
+// ── Shots ────────────────────────────────────────────────────────────────────
+export interface ShotInsert {
+  round_id: string;
+  ball_id: string;
+  player_key: string;
+  hole: number;
+  shot_index: number;
+  x: number;
+  y: number;
+  distance_yards: number;
+  gps_lat?: number | null;
+  gps_lng?: number | null;
+  cart_lat?: number | null;
+  cart_lng?: number | null;
+  cart_heading_deg?: number | null;
+}
+
+export async function recordShot(args: ShotInsert): Promise<void> {
+  const device_id = getDeviceId();
+  const { error } = await supabase.from("shots").insert({ ...args, device_id });
+  if (error) console.warn("[supabase] recordShot failed:", error.message);
+}
+
 export async function fetchLatestActiveRound(): Promise<RoundRow | null> {
   const device_id = getDeviceId();
   const { data, error } = await supabase

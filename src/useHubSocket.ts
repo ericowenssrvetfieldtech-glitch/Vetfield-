@@ -14,14 +14,26 @@ export interface ShotDetectedPayload {
   distance: number;      // yards
   x: number;             // normalized 0-1
   y: number;             // normalized 0-1
-  gps?: { lat: number; lng: number };
+  gps?: { lat: number; lng: number } | null;
+  cart?: { lat: number | null; lng: number | null; headingDeg: number | null } | null;
   ts: number;
 }
 
 export interface BallPositionPayload {
   ballId: string;
-  x: number;             // normalized 0-1
-  y: number;             // normalized 0-1
+  x: number;             // normalized 0-1 in course frame
+  y: number;
+  cartOffsetM?: { x: number; y: number } | null;  // metres in cart frame
+  ts: number;
+}
+
+export interface CartPayload {
+  lat: number | null;
+  lng: number | null;
+  headingDeg: number | null;
+  speedMps: number;
+  canvasX: number | null;   // normalized 0-1 in current course frame
+  canvasY: number | null;
   ts: number;
 }
 
@@ -30,6 +42,7 @@ interface HubState {
   latency: number | null;
   lastShot: ShotDetectedPayload | null;
   ballPositions: Record<string, BallPositionPayload>;
+  cart: CartPayload | null;
 }
 
 type HubAction =
@@ -39,7 +52,8 @@ type HubAction =
   | { type: "OFFLINE" }
   | { type: "LATENCY"; ms: number }
   | { type: "SHOT"; shot: ShotDetectedPayload }
-  | { type: "BALL_POS"; pos: BallPositionPayload };
+  | { type: "BALL_POS"; pos: BallPositionPayload }
+  | { type: "CART"; cart: CartPayload };
 
 function hubReducer(s: HubState, a: HubAction): HubState {
   switch (a.type) {
@@ -50,6 +64,7 @@ function hubReducer(s: HubState, a: HubAction): HubState {
     case "LATENCY":      return { ...s, latency: a.ms };
     case "SHOT":         return { ...s, lastShot: a.shot };
     case "BALL_POS":     return { ...s, ballPositions: { ...s.ballPositions, [a.pos.ballId]: a.pos } };
+    case "CART":         return { ...s, cart: a.cart };
     default:             return s;
   }
 }
@@ -66,6 +81,7 @@ export function useHubSocket({ activePlayer, currentHole, onShot }: UseHubSocket
     latency: null,
     lastShot: null,
     ballPositions: {},
+    cart: null,
   });
 
   const wsRef = useRef<WebSocket | null>(null);
@@ -140,8 +156,25 @@ export function useHubSocket({ activePlayer, currentHole, onShot }: UseHubSocket
       if (msg.type === "BALL_POSITION") {
         const raw = msg.payload as Partial<BallPositionPayload>;
         if (raw.ballId && typeof raw.x === "number" && typeof raw.y === "number") {
-          dispatch({ type: "BALL_POS", pos: { ballId: raw.ballId, x: raw.x, y: raw.y, ts: raw.ts ?? Date.now() } });
+          dispatch({ type: "BALL_POS", pos: {
+            ballId: raw.ballId, x: raw.x, y: raw.y,
+            cartOffsetM: raw.cartOffsetM ?? null,
+            ts: raw.ts ?? Date.now(),
+          }});
         }
+      }
+
+      if (msg.type === "CART") {
+        const raw = msg.payload as Partial<CartPayload>;
+        dispatch({ type: "CART", cart: {
+          lat: raw.lat ?? null,
+          lng: raw.lng ?? null,
+          headingDeg: raw.headingDeg ?? null,
+          speedMps: raw.speedMps ?? 0,
+          canvasX: raw.canvasX ?? null,
+          canvasY: raw.canvasY ?? null,
+          ts: raw.ts ?? Date.now(),
+        }});
       }
     };
 

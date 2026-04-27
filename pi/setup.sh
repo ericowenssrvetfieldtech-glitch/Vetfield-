@@ -37,48 +37,53 @@ echo "[4/8] gpsd configured"
 
 # ── 5. UWB hardware setup ────────────────────────────────────────────────────
 #
-# UWB ARCHITECTURE OPTIONS:
+# PRODUCTION ARCHITECTURE: Cart-mounted antennas
 #
-# Option A — Qorvo DWM1001/DWM3000 anchor network (recommended for 2D positioning)
-#   - 3+ DWM1001-DEV boards as anchors around the hole (tee, fairway L/R, green)
-#   - 1 DWM1001-DEV as gateway connected to Pi via USB/UART
-#   - UWB tag on each golf ball (or use OnCore GENiUS ball with embedded UWB)
-#   - Anchors compute TDOA position and gateway sends "POS,<tag>,<x>,<y>,<z>,<q>" over serial
+#   3-4 DWM3000 antennas mounted on the cart roof at known offsets ranging to
+#   the UWB tag inside each golf ball. The Pi:
+#     • trilaterates ball position in CART FRAME (metres from cart centre)
+#     • reads cart GPS from /dev/ttyAMA0 via gpsd
+#     • reads cart heading from a magnetometer (I2C) OR GPS course-over-ground
+#     • combines the three to give absolute course position
+#     • runs shot detection (ball must move >= 0.8m, then settle 1.8s)
 #
-# Option B — Single ranging tag on cart (distance only, estimated position)
-#   - 1 DWM3000 module on Pi (USB/UART)
-#   - UWB tag on ball
-#   - Only gives distance, not 2D position
-#   - Set UWB_MODE=tag in the service file
+# RECOMMENDED CART HARDWARE:
+#   • 3x Qorvo DWM3000EVB or DWM1001-DEV (one per antenna)
+#   • 1x USB hub on the Pi → USB-Serial out of each DWM
+#   • 1x u-blox NEO-M8N or similar GPS module on UART (gpsd)
+#   • 1x QMC5883L or HMC5883L magnetometer on I2C (optional, for heading at rest)
+#   • Power: 5V/3A via cart 12V → buck converter
 #
-# Option C — OnCore GENiUS ball system
-#   - OnCore's SmartCourse anchors around the hole
-#   - GENiUS ball has embedded UWB transmitter
-#   - Gateway sends "UWB,<ball_id>,<x>,<y>,<z>,<speed>,<quality>" over serial
+# ANTENNA MOUNTING:
+#   Mount antennas on the cart roof in a non-collinear pattern. A "T" layout
+#   (front-left, front-right, rear-centre) gives good 2D coverage for ranges
+#   of 5-30m which covers any shot from the cart. The geometry constants in
+#   /etc/systemd/system/vetfield-hub.service must match the physical mounts.
 #
-# HARDWARE CONNECTION:
-#   - Connect UWB gateway module to Pi USB port (appears as /dev/ttyUSB0 or /dev/ttyACM0)
-#   - If using UART: connect DWM1001 UART TX→Pi RX (GPIO 15), DWM1001 RX→Pi TX (GPIO 14)
-#     Then disable Pi serial console: sudo raspi-config → Interface → Serial → No shell, Yes hardware
-#     The device will be /dev/ttyAMA0 or /dev/serial0
-#   - For multi-anchor setups, connect a second gateway to a different USB port
-#     and set UWB_PORT_2 in the service file
+# BALL HARDWARE:
+#   • OnCore GENiUS ball (has embedded UWB tag)
+#   • Or: standard ball with a Qorvo DWM3001CDK tag (~6mm) glued in the ball core
+#   • Each ball reports a unique tag ID (ball1, ball2, ball3, ball4)
 
-# Enable Pi UART for direct DWM1001 connection (optional)
+# Enable Pi UART for direct DWM1001 connection
 if ! grep -q "enable_uart=1" /boot/config.txt 2>/dev/null; then
   echo "enable_uart=1" >> /boot/config.txt
-  echo "[5/8] UART enabled for direct UWB module connection (reboot required)"
-else
-  echo "[5/8] UART already enabled"
+  echo "[5/8] UART enabled (reboot required)"
 fi
+
+# Enable I2C for the magnetometer / IMU
+if ! grep -q "dtparam=i2c_arm=on" /boot/config.txt 2>/dev/null; then
+  echo "dtparam=i2c_arm=on" >> /boot/config.txt
+  echo "[5/8] I2C enabled for magnetometer (reboot required)"
+fi
+modprobe i2c-dev 2>/dev/null || true
 
 # Set udev rules for consistent UWB serial port naming
 cat > /etc/udev/rules.d/99-uwb-serial.rules <<'UDEV'
-# Qorvo DWM1001-DEV (USB-Serial)
+# Qorvo DWM1001/DWM3000 cart antenna gateway (USB-Serial)
 SUBSYSTEM=="tty", ATTRS{idVendor}=="10c4", ATTRS{idProduct}=="ea60", SYMLINK+="uwb-gateway0"
-# Second gateway
 SUBSYSTEM=="tty", ATTRS{idVendor}=="10c4", ATTRS{idProduct}=="ea60", ATTRS{devpath}=="?.2", SYMLINK+="uwb-gateway1"
-# Direct UART (DWM1001 via Pi GPIO)
+# Direct UART (DWM via Pi GPIO)
 KERNEL=="ttyAMA0", SYMLINK+="uwb-uart"
 UDEV
 udevadm control --reload-rules 2>/dev/null || true
@@ -97,7 +102,8 @@ cat > "$APP_DIR/package.json" <<'EOF'
     "ws": "^8.16.0",
     "serialport": "^12.0.0",
     "@serialport/parser-readline": "^12.0.0",
-    "node-gpsd": "^0.3.0"
+    "node-gpsd": "^0.3.0",
+    "i2c-bus": "^5.2.3"
   }
 }
 EOF
