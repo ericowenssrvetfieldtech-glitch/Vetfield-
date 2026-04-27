@@ -812,12 +812,12 @@ function HomeScreen(){
           boxShadow:`0 0 40px ${NAVY}80`,fontSize:32,border:`2px solid ${GOLD}40`}}>⛳</div>
 
         <div style={{textAlign:"center"}}>
-          <div style={{fontFamily:"'Rajdhani',sans-serif",fontWeight:700,fontSize:38,letterSpacing:2,
-            background:`linear-gradient(135deg, #fff 30%, ${GOLD})`,WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent"}}>
-            VetField
+          <div style={{fontFamily:"'Rajdhani',sans-serif",fontWeight:700,fontSize:34,letterSpacing:2,
+            background:`linear-gradient(135deg, #fff 30%, ${GOLD})`,WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent",lineHeight:1.05}}>
+            VetField Golf
           </div>
-          <div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:14,color:PLAYER_COLORS.p1,letterSpacing:3,marginTop:-2}}>
-            SMARTCART
+          <div style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:14,color:PLAYER_COLORS.p1,letterSpacing:4,marginTop:2}}>
+            SMARTCART CADDY
           </div>
         </div>
 
