@@ -192,6 +192,85 @@ export async function recordShot(args: ShotInsert): Promise<void> {
   if (error) console.warn("[supabase] recordShot failed:", error.message);
 }
 
+// ── Smart Glasses & Meta AI ──────────────────────────────────────────────────
+export interface GlassesSession {
+  id: string;
+  device_id: string;
+  round_id: string | null;
+  model: string;
+  status: "paired" | "streaming" | "ended";
+  started_at: string;
+  ended_at: string | null;
+}
+
+export async function startGlassesSession(args: {
+  round_id: string | null;
+  model: string;
+}): Promise<GlassesSession | null> {
+  const device_id = getDeviceId();
+  const { data, error } = await supabase
+    .from("glasses_sessions")
+    .insert({ device_id, round_id: args.round_id, model: args.model, status: "streaming" })
+    .select()
+    .maybeSingle();
+  if (error) {
+    console.warn("[supabase] startGlassesSession failed:", error.message);
+    return null;
+  }
+  return data as GlassesSession | null;
+}
+
+export async function endGlassesSession(id: string): Promise<void> {
+  const { error } = await supabase
+    .from("glasses_sessions")
+    .update({ status: "ended", ended_at: new Date().toISOString() })
+    .eq("id", id);
+  if (error) console.warn("[supabase] endGlassesSession failed:", error.message);
+}
+
+export interface AiQueryRow {
+  id: string;
+  device_id: string;
+  round_id: string | null;
+  hole: number | null;
+  prompt: string;
+  response: string;
+  intent: string;
+  created_at: string;
+}
+
+export async function recordAiQuery(args: {
+  round_id: string | null;
+  hole: number | null;
+  prompt: string;
+  response: string;
+  intent: string;
+}): Promise<AiQueryRow | null> {
+  const device_id = getDeviceId();
+  const { data, error } = await supabase
+    .from("ai_queries")
+    .insert({ ...args, device_id })
+    .select()
+    .maybeSingle();
+  if (error) {
+    console.warn("[supabase] recordAiQuery failed:", error.message);
+    return null;
+  }
+  return data as AiQueryRow | null;
+}
+
+export async function fetchRecentAiQueries(roundId: string | null, limit = 20): Promise<AiQueryRow[]> {
+  const device_id = getDeviceId();
+  let q = supabase.from("ai_queries").select("*").eq("device_id", device_id);
+  if (roundId) q = q.eq("round_id", roundId);
+  const { data, error } = await q.order("created_at", { ascending: false }).limit(limit);
+  if (error) {
+    console.warn("[supabase] fetchRecentAiQueries failed:", error.message);
+    return [];
+  }
+  return (data || []) as AiQueryRow[];
+}
+
 export async function fetchLatestActiveRound(): Promise<RoundRow | null> {
   const device_id = getDeviceId();
   const { data, error } = await supabase

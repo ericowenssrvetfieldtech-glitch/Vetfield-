@@ -3,6 +3,7 @@ import { useHubSocket } from "./useHubSocket";
 import type { ShotDetectedPayload, BallPositionPayload, CartPayload } from "./useHubSocket";
 import { HubStatusDot, HubStatusBar } from "./HubStatus";
 import AddCourseScreen from "./AddCourseScreen";
+import GlassesPanel from "./GlassesPanel";
 import {
   fetchCourses, createRound, updateRoundState, completeRound, fetchLatestActiveRound, recordShot,
 } from "./lib/supabase";
@@ -939,7 +940,7 @@ function RoundScreen(){
   const players = usePlayers();
   const course=state.course;
   const hole=course.holes.find(h=>h.number===state.currentHole)||course.holes[0];
-  const PANELS=[{id:"map",l:"⛳ Map"},{id:"club",l:"🏌 Club"},{id:"stats",l:"Stats"},{id:"card",l:"Card"}];
+  const PANELS=[{id:"map",l:"Map"},{id:"club",l:"Club"},{id:"ar",l:"AR Glasses"},{id:"stats",l:"Stats"},{id:"card",l:"Card"}];
 
   const [shotFlash, setShotFlash]=useState(false);
   const shotFlashTimer=useRef<ReturnType<typeof setTimeout>|null>(null);
@@ -1049,6 +1050,14 @@ function RoundScreen(){
       <div style={{flex:1,padding:12,overflowY:"auto"}}>
         {state.panel==="map"  &&<ShotMap hole={hole} ballPositions={ballPositions} cart={cart}/>}
         {state.panel==="club" &&<ClubPanel hole={hole}/>}
+        {state.panel==="ar"   &&<GlassesPanel
+          roundId={state.roundId}
+          hole={hole}
+          windMph={state.wind.mph}
+          windDir={state.wind.dir}
+          recommendedClub={recommendClub(hole.yards) || undefined}
+          distanceToPin={hole.yards}
+        />}
         {state.panel==="stats"&&<StatsPanel/>}
         {state.panel==="card" &&<ScorecardPanel/>}
       </div>
