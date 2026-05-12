@@ -176,6 +176,7 @@ function ShotMap({hole, ballPositions, cart}: {hole: Hole; ballPositions?: Recor
   const {state,dispatch}=useGame();
   const players = usePlayers();
   const canvasRef=useRef<HTMLCanvasElement>(null);
+  const [mapMode,setMapMode]=useState<"satellite"|"chart">("satellite");
 
   const shotsByPlayer = Object.fromEntries(
     players.map(pk => [pk, state.shots[pk][hole.number] || []])
@@ -188,30 +189,170 @@ function ShotMap({hole, ballPositions, cart}: {hole: Hole; ballPositions?: Recor
     const W=cv.width,H=cv.height;
     ctx.clearRect(0,0,W,H);
 
-    ctx.fillStyle="#1A3D0A"; ctx.fillRect(0,0,W,H);
-    ctx.strokeStyle="rgba(255,255,255,0.025)"; ctx.lineWidth=1;
-    for(let x=0;x<W;x+=24){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,H);ctx.stroke();}
-    for(let y=0;y<H;y+=24){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(W,y);ctx.stroke();}
+    const satellite = mapMode === "satellite";
+
+    // Seeded pseudo-random for stable noise per hole
+    let seed = hole.number * 9301 + 49297;
+    const rand = () => { seed = (seed * 9301 + 49297) % 233280; return seed / 233280; };
+
+    if(satellite){
+      // Base: dark rough with mottled noise, evoking aerial imagery
+      const baseGrad = ctx.createLinearGradient(0,0,W,H);
+      baseGrad.addColorStop(0,"#2D4A1E");
+      baseGrad.addColorStop(0.5,"#1F3A14");
+      baseGrad.addColorStop(1,"#16300E");
+      ctx.fillStyle = baseGrad; ctx.fillRect(0,0,W,H);
+
+      // Mottled rough noise
+      for(let i=0;i<420;i++){
+        const x=rand()*W, y=rand()*H, r=1+rand()*3;
+        const shade = Math.floor(rand()*35);
+        ctx.fillStyle = `rgba(${30+shade},${60+shade},${20+shade},0.6)`;
+        ctx.beginPath(); ctx.arc(x,y,r,0,Math.PI*2); ctx.fill();
+      }
+      // Highlight specks
+      for(let i=0;i<120;i++){
+        const x=rand()*W, y=rand()*H;
+        ctx.fillStyle = `rgba(140,170,90,${0.05+rand()*0.08})`;
+        ctx.fillRect(x,y,1,1);
+      }
+    } else {
+      ctx.fillStyle="#1A3D0A"; ctx.fillRect(0,0,W,H);
+      ctx.strokeStyle="rgba(255,255,255,0.025)"; ctx.lineWidth=1;
+      for(let x=0;x<W;x+=24){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,H);ctx.stroke();}
+      for(let y=0;y<H;y+=24){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(W,y);ctx.stroke();}
+    }
 
     const p=(pt:{x:number;y:number})=>({x:pt.x*W,y:pt.y*H});
 
-    const hc: Record<string,{fill:string;stroke:string}> = {
+    const polyPath = (pts:{x:number;y:number}[])=>{
+      ctx.beginPath();
+      pts.forEach((pt,i)=>{ const cp=p(pt); i===0?ctx.moveTo(cp.x,cp.y):ctx.lineTo(cp.x,cp.y); });
+      ctx.closePath();
+    };
+
+    const hc: Record<string,{fill:string;stroke:string}> = satellite ? {
+      water:{fill:"#1B4F8C",stroke:"#0E2E5A"},
+      bunker:{fill:"#E8D59A",stroke:"#B8A060"},
+      trees:{fill:"#0F2A12",stroke:"#0A1A0A"},
+    } : {
       water:{fill:"rgba(20,80,200,0.45)",stroke:"#1E64C8"},
       bunker:{fill:"rgba(230,200,100,0.65)",stroke:"#C8A000"},
-      trees:{fill:"rgba(10,80,20,0.55)",stroke:"#0A6010"}
+      trees:{fill:"rgba(10,80,20,0.55)",stroke:"#0A6010"},
     };
+
     hole.hazards?.forEach(hz=>{
       const c=hc[hz.type]; if(!c)return;
-      ctx.fillStyle=c.fill; ctx.strokeStyle=c.stroke; ctx.lineWidth=1.5;
-      ctx.beginPath(); hz.pts.forEach((pt,i)=>{ const cp=p(pt); i===0?ctx.moveTo(cp.x,cp.y):ctx.lineTo(cp.x,cp.y); }); ctx.closePath(); ctx.fill(); ctx.stroke();
+      if(satellite && hz.type === "trees"){
+        // Soft shadow beneath canopy
+        ctx.save();
+        ctx.translate(3,4);
+        ctx.fillStyle="rgba(0,0,0,0.45)";
+        polyPath(hz.pts); ctx.fill();
+        ctx.restore();
+        // Canopy base
+        ctx.fillStyle=c.fill; polyPath(hz.pts); ctx.fill();
+        // Bumpy canopy texture
+        ctx.save(); polyPath(hz.pts); ctx.clip();
+        for(let i=0;i<260;i++){
+          const x=rand()*W, y=rand()*H;
+          const r=2+rand()*4;
+          const shade = Math.floor(rand()*40);
+          ctx.fillStyle=`rgba(${20+shade},${60+shade},${25+shade},0.75)`;
+          ctx.beginPath(); ctx.arc(x,y,r,0,Math.PI*2); ctx.fill();
+        }
+        ctx.restore();
+      } else if(satellite && hz.type === "water"){
+        // Water depth gradient
+        const cp0 = p(hz.pts[0]);
+        const wg = ctx.createRadialGradient(cp0.x,cp0.y,0,cp0.x,cp0.y,Math.max(W,H)*0.4);
+        wg.addColorStop(0,"#2E6FAE"); wg.addColorStop(1,"#0D2548");
+        ctx.fillStyle=wg; polyPath(hz.pts); ctx.fill();
+        // Specular sheen lines
+        ctx.save(); polyPath(hz.pts); ctx.clip();
+        ctx.strokeStyle="rgba(255,255,255,0.12)"; ctx.lineWidth=1;
+        for(let i=0;i<14;i++){
+          const y = rand()*H;
+          ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(W,y+rand()*3-1.5); ctx.stroke();
+        }
+        ctx.restore();
+        ctx.strokeStyle=c.stroke; ctx.lineWidth=1.5; polyPath(hz.pts); ctx.stroke();
+      } else if(satellite && hz.type === "bunker"){
+        // Sand with grain
+        ctx.fillStyle=c.fill; polyPath(hz.pts); ctx.fill();
+        ctx.save(); polyPath(hz.pts); ctx.clip();
+        for(let i=0;i<180;i++){
+          const x=rand()*W, y=rand()*H;
+          ctx.fillStyle=`rgba(${180+Math.floor(rand()*40)},${160+Math.floor(rand()*30)},${110+Math.floor(rand()*20)},0.5)`;
+          ctx.fillRect(x,y,1,1);
+        }
+        ctx.restore();
+        ctx.strokeStyle=c.stroke; ctx.lineWidth=1; polyPath(hz.pts); ctx.stroke();
+      } else {
+        ctx.fillStyle=c.fill; ctx.strokeStyle=c.stroke; ctx.lineWidth=1.5;
+        polyPath(hz.pts); ctx.fill(); ctx.stroke();
+      }
     });
 
-    ctx.fillStyle="#2D5A1B";
-    ctx.beginPath(); hole.fairway.forEach((pt,i)=>{ const cp=p(pt); i===0?ctx.moveTo(cp.x,cp.y):ctx.lineTo(cp.x,cp.y); }); ctx.closePath(); ctx.fill();
+    // Fairway
+    if(satellite){
+      // Drop shadow under fairway for depth
+      ctx.save();
+      ctx.shadowColor="rgba(0,0,0,0.35)";
+      ctx.shadowBlur=8; ctx.shadowOffsetY=2;
+      ctx.fillStyle="#4A7A2B";
+      polyPath(hole.fairway); ctx.fill();
+      ctx.restore();
 
-    ctx.fillStyle="#388A1E";
-    ctx.beginPath(); hole.green.forEach((pt,i)=>{ const cp=p(pt); i===0?ctx.moveTo(cp.x,cp.y):ctx.lineTo(cp.x,cp.y); }); ctx.closePath(); ctx.fill();
-    ctx.strokeStyle="rgba(255,255,255,0.1)"; ctx.lineWidth=1; ctx.stroke();
+      // Mow-line striping inside fairway
+      ctx.save(); polyPath(hole.fairway); ctx.clip();
+      for(let y=0;y<H;y+=14){
+        ctx.fillStyle = (Math.floor(y/14)%2===0) ? "rgba(90,140,55,0.35)" : "rgba(60,100,35,0.35)";
+        ctx.fillRect(0,y,W,14);
+      }
+      // Fairway grain noise
+      for(let i=0;i<260;i++){
+        const x=rand()*W, y=rand()*H;
+        ctx.fillStyle=`rgba(${60+Math.floor(rand()*40)},${110+Math.floor(rand()*40)},${40+Math.floor(rand()*25)},0.4)`;
+        ctx.fillRect(x,y,1,1);
+      }
+      ctx.restore();
+
+      // Soft fairway edge (rough-to-fairway blend)
+      ctx.save();
+      ctx.strokeStyle="rgba(30,55,15,0.6)"; ctx.lineWidth=3;
+      polyPath(hole.fairway); ctx.stroke();
+      ctx.restore();
+    } else {
+      ctx.fillStyle="#2D5A1B";
+      polyPath(hole.fairway); ctx.fill();
+    }
+
+    // Green
+    if(satellite){
+      ctx.save();
+      ctx.shadowColor="rgba(0,0,0,0.4)"; ctx.shadowBlur=6; ctx.shadowOffsetY=2;
+      const gg = ctx.createRadialGradient(
+        p(hole.pin).x, p(hole.pin).y, 2,
+        p(hole.pin).x, p(hole.pin).y, Math.max(W,H)*0.18);
+      gg.addColorStop(0,"#8CC36A"); gg.addColorStop(1,"#4E8A30");
+      ctx.fillStyle=gg; polyPath(hole.green); ctx.fill();
+      ctx.restore();
+      // Fine grain
+      ctx.save(); polyPath(hole.green); ctx.clip();
+      for(let i=0;i<160;i++){
+        const x=rand()*W, y=rand()*H;
+        ctx.fillStyle=`rgba(255,255,255,${0.02+rand()*0.05})`;
+        ctx.fillRect(x,y,1,1);
+      }
+      ctx.restore();
+      ctx.strokeStyle="rgba(255,255,255,0.18)"; ctx.lineWidth=1;
+      polyPath(hole.green); ctx.stroke();
+    } else {
+      ctx.fillStyle="#388A1E";
+      polyPath(hole.green); ctx.fill();
+      ctx.strokeStyle="rgba(255,255,255,0.1)"; ctx.lineWidth=1; ctx.stroke();
+    }
 
     const pin=p(hole.pin);
     ctx.strokeStyle="#fff"; ctx.lineWidth=1.5;
@@ -346,7 +487,7 @@ function ShotMap({hole, ballPositions, cart}: {hole: Hole; ballPositions?: Recor
     ctx.fillText(`PAR ${hole.par}  •  ${hole.yards}Y`,14,42);
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  },[hole, JSON.stringify(shotsByPlayer), ballPositions, cart, players]);
+  },[hole, JSON.stringify(shotsByPlayer), ballPositions, cart, players, mapMode]);
 
   useEffect(()=>{draw();},[draw]);
 
@@ -375,6 +516,18 @@ function ShotMap({hole, ballPositions, cart}: {hole: Hole; ballPositions?: Recor
     <div style={{position:"relative",width:"100%"}}>
       <canvas ref={canvasRef} width={580} height={440} onClick={handleTap}
         style={{width:"100%",height:440,cursor:"crosshair",borderRadius:8,border:"1px solid rgba(255,255,255,0.08)",display:"block"}}/>
+      <div style={{position:"absolute",top:8,left:8,display:"flex",background:"rgba(0,0,0,0.7)",
+        border:`1px solid ${GOLD}40`,borderRadius:6,overflow:"hidden"}}>
+        {(["satellite","chart"] as const).map(m=>(
+          <button key={m} onClick={()=>setMapMode(m)}
+            style={{padding:"5px 10px",border:"none",cursor:"pointer",
+              background: mapMode===m ? GOLD : "transparent",
+              color: mapMode===m ? "#000" : "#fff",
+              fontFamily:"'IBM Plex Mono',monospace",fontSize:10,letterSpacing:1,fontWeight:700}}>
+            {m.toUpperCase()}
+          </button>
+        ))}
+      </div>
       {cart && cart.lat!=null && (
         <div style={{position:"absolute",top:8,right:8,background:"rgba(0,0,0,0.7)",
           borderRadius:6,padding:"6px 10px",border:`1px solid ${GOLD}40`,
