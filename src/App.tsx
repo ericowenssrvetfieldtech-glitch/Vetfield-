@@ -516,7 +516,7 @@ function ShotMap({hole, ballPositions, cart}: {hole: Hole; ballPositions?: Recor
     <div style={{position:"relative",width:"100%"}}>
       <canvas ref={canvasRef} width={580} height={440} onClick={handleTap}
         style={{width:"100%",height:440,cursor:"crosshair",borderRadius:8,border:"1px solid rgba(255,255,255,0.08)",display:"block"}}/>
-      <div style={{position:"absolute",top:8,left:8,display:"flex",background:"rgba(0,0,0,0.7)",
+      <div style={{position:"absolute",bottom:8,left:8,display:"flex",background:"rgba(0,0,0,0.7)",
         border:`1px solid ${GOLD}40`,borderRadius:6,overflow:"hidden"}}>
         {(["satellite","chart"] as const).map(m=>(
           <button key={m} onClick={()=>setMapMode(m)}
@@ -529,7 +529,7 @@ function ShotMap({hole, ballPositions, cart}: {hole: Hole; ballPositions?: Recor
         ))}
       </div>
       {cart && cart.lat!=null && (
-        <div style={{position:"absolute",top:8,right:8,background:"rgba(0,0,0,0.7)",
+        <div style={{position:"absolute",bottom:44,left:8,background:"rgba(0,0,0,0.7)",
           borderRadius:6,padding:"6px 10px",border:`1px solid ${GOLD}40`,
           fontFamily:"'IBM Plex Mono',monospace",fontSize:9,color:"#fff",lineHeight:1.5}}>
           <div style={{color:GOLD,fontWeight:700,letterSpacing:1}}>CART TELEMETRY</div>
