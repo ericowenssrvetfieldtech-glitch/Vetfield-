@@ -553,12 +553,14 @@ function ShotMap({hole, ballPositions, cart}: {hole: Hole; ballPositions?: Recor
 }
 
 // ── CLUB RECOMMENDER ─────────────────────────────────────────────────────────
-function ClubPanel({hole}: {hole: Hole}){
+function ClubPanel({hole, autoYards}: {hole: Hole; autoYards: number | null}){
   const {state,dispatch}=useGame();
   const [yards,setYards]=useState("");
+  const [manual,setManual]=useState(false);
   const wind=state.wind;
   const windAdj=["N","NE","NW"].includes(wind.dir)?wind.mph:-Math.round(wind.mph*0.7);
-  const rec=+yards>0?recommendClub(+yards,windAdj):null;
+  const effectiveYards = manual ? +yards : (autoYards ?? +yards);
+  const rec=effectiveYards>0?recommendClub(effectiveYards,windAdj):null;
   const DIRS=["N","NE","E","SE","S","SW","W","NW"];
 
   return(
@@ -586,13 +588,39 @@ function ClubPanel({hole}: {hole: Hole}){
       </div>
 
       <div style={{background:"rgba(255,255,255,0.05)",borderRadius:8,padding:"10px 12px"}}>
-        <div style={{color:"#93C5FD",fontFamily:"'IBM Plex Mono',monospace",fontSize:10,letterSpacing:1,marginBottom:8}}>DISTANCE TO PIN</div>
-        <div style={{display:"flex",gap:8,alignItems:"center",marginBottom:8}}>
-          <input type="number" value={yards} onChange={e=>setYards(e.target.value)} placeholder="Yards..."
-            style={{flex:1,padding:"9px 10px",borderRadius:6,background:"rgba(255,255,255,0.1)",
-              border:"1px solid rgba(255,255,255,0.2)",color:"#fff",fontSize:20,fontFamily:"'IBM Plex Mono',monospace",outline:"none"}}/>
-          <span style={{color:"#9CA3AF",fontSize:12,fontFamily:"'IBM Plex Mono',monospace"}}>yds</span>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+          <div style={{color:"#93C5FD",fontFamily:"'IBM Plex Mono',monospace",fontSize:10,letterSpacing:1}}>DISTANCE TO PIN</div>
+          {autoYards!=null && (
+            <div style={{display:"flex",alignItems:"center",gap:4,fontFamily:"'IBM Plex Mono',monospace",fontSize:9,color: manual ? "#9CA3AF" : GOLD}}>
+              <span style={{width:6,height:6,borderRadius:"50%",background: manual ? "#9CA3AF" : GOLD,boxShadow: manual ? "none" : `0 0 6px ${GOLD}`}}/>
+              UWB LIVE
+            </div>
+          )}
         </div>
+        {autoYards!=null && !manual ? (
+          <div style={{display:"flex",gap:8,alignItems:"baseline",marginBottom:8}}>
+            <div style={{flex:1,padding:"9px 10px",borderRadius:6,background:`linear-gradient(135deg,${GOLD}15,${GOLD}05)`,
+              border:`1px solid ${GOLD}55`,color:"#fff",fontSize:24,fontWeight:700,fontFamily:"'IBM Plex Mono',monospace"}}>
+              {autoYards}
+            </div>
+            <span style={{color:GOLD,fontSize:12,fontFamily:"'IBM Plex Mono',monospace"}}>yds</span>
+            <button onClick={()=>{setManual(true);setYards(String(autoYards));}}
+              style={{padding:"6px 9px",borderRadius:4,border:"1px solid rgba(255,255,255,0.2)",background:"rgba(255,255,255,0.06)",
+                color:"#D1D5DB",fontSize:9,fontFamily:"'IBM Plex Mono',monospace",cursor:"pointer",letterSpacing:0.5}}>OVERRIDE</button>
+          </div>
+        ) : (
+          <div style={{display:"flex",gap:8,alignItems:"center",marginBottom:8}}>
+            <input type="number" value={yards} onChange={e=>setYards(e.target.value)} placeholder="Yards..."
+              style={{flex:1,padding:"9px 10px",borderRadius:6,background:"rgba(255,255,255,0.1)",
+                border:"1px solid rgba(255,255,255,0.2)",color:"#fff",fontSize:20,fontFamily:"'IBM Plex Mono',monospace",outline:"none"}}/>
+            <span style={{color:"#9CA3AF",fontSize:12,fontFamily:"'IBM Plex Mono',monospace"}}>yds</span>
+            {autoYards!=null && manual && (
+              <button onClick={()=>{setManual(false);setYards("");}}
+                style={{padding:"6px 9px",borderRadius:4,border:"none",background:GOLD,color:"#000",
+                  fontSize:9,fontWeight:700,fontFamily:"'IBM Plex Mono',monospace",cursor:"pointer",letterSpacing:0.5}}>USE UWB</button>
+            )}
+          </div>
+        )}
         <div style={{display:"flex",flexWrap:"wrap",gap:5}}>
           {[50,75,100,125,150,175,200,225].map(y=>(
             <button key={y} onClick={()=>setYards(String(y))}
@@ -1142,6 +1170,25 @@ function RoundScreen(){
     onShot:       handleHubShot,
   });
 
+  // Auto-calculate distance from active player's UWB ball to the pin.
+  // Hole coords are normalized [0,1]; multiply the magnitude by hole.yards
+  // to convert to real yards along the hole's tee→pin axis.
+  const autoDistanceToPin: number | null = (()=>{
+    if(!ballPositions) return null;
+    const ballToPlayer: Record<string,PlayerKey> = {ball1:"p1",ball2:"p2",ball3:"p3",ball4:"p4"};
+    const ballId = (Object.keys(ballToPlayer) as Array<keyof typeof ballToPlayer>)
+      .find(b => ballToPlayer[b] === state.activePlayer);
+    const bp = ballId ? ballPositions[ballId] : undefined;
+    if(!bp) return null;
+    const dx = (hole.pin.x - bp.x);
+    const dy = (hole.pin.y - bp.y);
+    const norm = Math.sqrt(dx*dx + dy*dy);
+    const teeDx = hole.pin.x - hole.tee.x;
+    const teeDy = hole.pin.y - hole.tee.y;
+    const teeNorm = Math.sqrt(teeDx*teeDx + teeDy*teeDy) || 1;
+    return Math.round((norm / teeNorm) * hole.yards);
+  })();
+
   return(
     <div style={{minHeight:"100vh",display:"flex",flexDirection:"column",background:"#050E1A"}}>
       {/* Topbar */}
@@ -1202,14 +1249,14 @@ function RoundScreen(){
       {/* Active panel */}
       <div style={{flex:1,padding:12,overflowY:"auto"}}>
         {state.panel==="map"  &&<ShotMap hole={hole} ballPositions={ballPositions} cart={cart}/>}
-        {state.panel==="club" &&<ClubPanel hole={hole}/>}
+        {state.panel==="club" &&<ClubPanel hole={hole} autoYards={autoDistanceToPin}/>}
         {state.panel==="ar"   &&<GlassesPanel
           roundId={state.roundId}
           hole={hole}
           windMph={state.wind.mph}
           windDir={state.wind.dir}
-          recommendedClub={recommendClub(hole.yards) || undefined}
-          distanceToPin={hole.yards}
+          recommendedClub={recommendClub(autoDistanceToPin ?? hole.yards) || undefined}
+          distanceToPin={autoDistanceToPin ?? hole.yards}
         />}
         {state.panel==="stats"&&<StatsPanel/>}
         {state.panel==="card" &&<ScorecardPanel/>}
