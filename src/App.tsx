@@ -650,7 +650,7 @@ function ClubPanel({hole, autoYards}: {hole: Hole; autoYards: number | null}){
       <div>
         <div style={{color:"#93C5FD",fontFamily:"'IBM Plex Mono',monospace",fontSize:10,letterSpacing:1,marginBottom:8}}>ALL CLUBS</div>
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:4}}>
-          {CLUBS.filter(c=>c.abbr!=="PT").map(cl=>(
+          {CLUBS.map(cl=>(
             <div key={cl.abbr} style={{display:"flex",alignItems:"center",gap:7,padding:"6px 9px",borderRadius:5,cursor:"pointer",
               background:rec?.abbr===cl.abbr?`${cl.color}30`:"rgba(255,255,255,0.04)",
               outline:rec?.abbr===cl.abbr?`1px solid ${cl.color}`:"none"}}>
@@ -658,7 +658,9 @@ function ClubPanel({hole, autoYards}: {hole: Hole; autoYards: number | null}){
                 fontFamily:"'IBM Plex Mono',monospace",fontWeight:700,fontSize:9,color:"#fff",flexShrink:0}}>{cl.abbr}</div>
               <div>
                 <div style={{color:"#fff",fontSize:11}}>{cl.name}</div>
-                <div style={{color:"#9CA3AF",fontSize:9,fontFamily:"'IBM Plex Mono',monospace"}}>{cl.avg}y</div>
+                <div style={{color:"#9CA3AF",fontSize:9,fontFamily:"'IBM Plex Mono',monospace"}}>
+                  {cl.abbr==="PT" ? "Green" : `${cl.avg}y`}
+                </div>
               </div>
             </div>
           ))}
