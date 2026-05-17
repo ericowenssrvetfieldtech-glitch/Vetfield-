@@ -288,3 +288,20 @@ export async function fetchLatestActiveRound(): Promise<RoundRow | null> {
   }
   return data as RoundRow | null;
 }
+
+export async function fetchCompletedRounds(): Promise<RoundRow[]> {
+  const device_id = getDeviceId();
+  const { data, error } = await supabase
+    .from("rounds")
+    .select("*")
+    .eq("device_id", device_id)
+    .eq("status", "completed")
+    .order("ended_at", { ascending: false })
+    .limit(50);
+
+  if (error) {
+    console.warn("[supabase] fetchCompletedRounds failed:", error.message);
+    return [];
+  }
+  return (data || []) as RoundRow[];
+}
