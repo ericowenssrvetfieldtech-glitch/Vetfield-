@@ -670,6 +670,183 @@ function ClubPanel({hole, autoYards}: {hole: Hole; autoYards: number | null}){
   );
 }
 
+// ── GAPP PANEL ──────────────────────────────────────────────────────────────
+function GAPPPanel(){
+  const [expanded,setExpanded]=useState<string|null>(null);
+
+  const sections: {id:string;title:string;icon:string;color:string;tips:string[];detail:string}[] = [
+    {
+      id:"grip", title:"Grip", icon:"G", color:"#60A5FA",
+      tips:[
+        "Neutral grip: V's of both hands point to trail shoulder",
+        "Light pressure (4/10) for feel; firm with trail hand pinkie overlap",
+        "Lead hand: last 3 fingers secure the club",
+        "Check: club runs from base of pinkie to mid-index finger"
+      ],
+      detail:"The grip is the only connection between you and the club. A neutral grip returns the face square at impact. Too strong (V's past trail shoulder) closes the face; too weak opens it."
+    },
+    {
+      id:"aim", title:"Aim", icon:"A", color:"#34D399",
+      tips:[
+        "Clubface aims at the target FIRST, then align body",
+        "Feet, hips, and shoulders parallel-left of target line",
+        "Pick an intermediate spot 2-3 feet ahead on the target line",
+        "Check alignment by laying a club across your toes"
+      ],
+      detail:"80% of directional misses start with misalignment. The face angle at impact determines 75-85% of the ball's starting direction. Body alignment influences the swing path."
+    },
+    {
+      id:"posture", title:"Posture", icon:"P", color:"#FB923C",
+      tips:[
+        "Bend from the hips, not the waist — maintain spine angle",
+        "Slight knee flex, weight on balls of feet",
+        "Arms hang naturally below shoulders",
+        "Chin up off chest to allow shoulder turn"
+      ],
+      detail:"Good posture allows the arms to swing freely and the body to rotate. A hunched back restricts rotation and leads to compensations. Maintain your spine angle through impact."
+    },
+    {
+      id:"position", title:"Position", icon:"P", color:"#F472B6",
+      tips:[
+        "Driver: ball off lead heel, widest stance",
+        "Irons: ball center to one ball forward of center",
+        "Wedges: center of stance, narrower width",
+        "Weight: 50/50 for irons, 55% trail side for driver"
+      ],
+      detail:"Ball position controls the low point of the arc. Too far forward = thin/topped. Too far back = fat/heavy. Stance width determines your base of support and rotation capacity."
+    },
+  ];
+
+  const facePathInfo = {
+    title: "Club Face & Path",
+    items: [
+      { label:"Face Closed + In-to-Out", result:"Draw / Hook", color:"#34D399" },
+      { label:"Face Open + Out-to-In", result:"Fade / Slice", color:"#60A5FA" },
+      { label:"Face Square + On Path", result:"Straight", color:"#C8960C" },
+      { label:"Face Open + In-to-Out", result:"Push / Push-Fade", color:"#FB923C" },
+      { label:"Face Closed + Out-to-In", result:"Pull / Pull-Hook", color:"#F472B6" },
+    ],
+    principles: [
+      "Club face at impact determines ~75% of initial ball direction",
+      "Path relative to face determines spin axis (curve)",
+      "Leading edge perpendicular to face angle, not the path",
+      "Attack angle affects launch and spin: negative = descending blow"
+    ]
+  };
+
+  return(
+    <div style={{display:"flex",flexDirection:"column",gap:12,overflowY:"auto"}}>
+      {/* GAPP Header */}
+      <div style={{background:"linear-gradient(135deg,#0F2444 0%,#1B3A6B 100%)",borderRadius:10,padding:"14px 16px",
+        border:`1px solid ${GOLD}40`}}>
+        <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:8}}>
+          <div style={{display:"flex",gap:3}}>
+            {sections.map(s=>(
+              <div key={s.id} style={{width:28,height:28,borderRadius:6,background:s.color,display:"flex",alignItems:"center",justifyContent:"center",
+                fontFamily:"'IBM Plex Mono',monospace",fontWeight:700,fontSize:13,color:"#fff"}}>{s.icon}</div>
+            ))}
+          </div>
+          <div>
+            <div style={{color:"#fff",fontFamily:"'Rajdhani',sans-serif",fontWeight:700,fontSize:18}}>Pre-Shot Checklist</div>
+            <div style={{color:"#9CA3AF",fontFamily:"'IBM Plex Mono',monospace",fontSize:9}}>Grip - Aim - Posture - Position</div>
+          </div>
+        </div>
+      </div>
+
+      {/* GAPP Sections */}
+      {sections.map(s=>{
+        const isOpen=expanded===s.id;
+        return(
+          <div key={s.id} style={{background:"rgba(255,255,255,0.04)",borderRadius:8,border:`1px solid ${isOpen?s.color+"60":"rgba(255,255,255,0.08)"}`,
+            overflow:"hidden",transition:"border-color 0.2s"}}>
+            <button onClick={()=>setExpanded(isOpen?null:s.id)}
+              style={{width:"100%",display:"flex",alignItems:"center",gap:10,padding:"11px 14px",border:"none",background:"transparent",cursor:"pointer",textAlign:"left"}}>
+              <div style={{width:32,height:32,borderRadius:7,background:`${s.color}20`,border:`1px solid ${s.color}60`,
+                display:"flex",alignItems:"center",justifyContent:"center",
+                fontFamily:"'IBM Plex Mono',monospace",fontWeight:700,fontSize:14,color:s.color,flexShrink:0}}>{s.icon}</div>
+              <div style={{flex:1}}>
+                <div style={{color:"#fff",fontWeight:600,fontSize:15,fontFamily:"'Rajdhani',sans-serif"}}>{s.title}</div>
+                <div style={{color:"#9CA3AF",fontSize:10,fontFamily:"'IBM Plex Mono',monospace",marginTop:1}}>{s.tips[0]}</div>
+              </div>
+              <div style={{color:s.color,fontSize:16,transform:isOpen?"rotate(180deg)":"rotate(0deg)",transition:"transform 0.2s"}}>▼</div>
+            </button>
+            {isOpen && (
+              <div style={{padding:"0 14px 14px",borderTop:`1px solid ${s.color}20`}}>
+                <div style={{padding:"10px 0",display:"flex",flexDirection:"column",gap:6}}>
+                  {s.tips.map((tip,i)=>(
+                    <div key={i} style={{display:"flex",gap:8,alignItems:"flex-start"}}>
+                      <div style={{width:18,height:18,borderRadius:4,background:`${s.color}15`,border:`1px solid ${s.color}40`,
+                        display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,
+                        fontFamily:"'IBM Plex Mono',monospace",fontSize:9,color:s.color,fontWeight:700}}>{i+1}</div>
+                      <div style={{color:"#D1D5DB",fontSize:12,lineHeight:1.4}}>{tip}</div>
+                    </div>
+                  ))}
+                </div>
+                <div style={{background:`${s.color}08`,borderRadius:6,padding:"8px 10px",border:`1px solid ${s.color}20`,marginTop:4}}>
+                  <div style={{color:"#9CA3AF",fontSize:10,fontFamily:"'IBM Plex Mono',monospace",letterSpacing:0.5,marginBottom:4}}>WHY IT MATTERS</div>
+                  <div style={{color:"#E5E7EB",fontSize:11,lineHeight:1.5}}>{s.detail}</div>
+                </div>
+              </div>
+            )}
+          </div>
+        );
+      })}
+
+      {/* Club Face & Path */}
+      <div style={{background:"rgba(255,255,255,0.04)",borderRadius:8,border:"1px solid rgba(255,255,255,0.08)",overflow:"hidden"}}>
+        <div style={{padding:"12px 14px",borderBottom:"1px solid rgba(255,255,255,0.06)"}}>
+          <div style={{color:GOLD,fontFamily:"'IBM Plex Mono',monospace",fontSize:10,letterSpacing:1,marginBottom:4}}>CLUB FACE & PATH</div>
+          <div style={{color:"#D1D5DB",fontSize:11,lineHeight:1.4}}>
+            The face angle determines where the ball starts. The path relative to the face determines curve.
+          </div>
+        </div>
+
+        {/* Visual diagram */}
+        <div style={{padding:"12px 14px",display:"flex",flexDirection:"column",gap:8}}>
+          <div style={{position:"relative",height:100,background:"rgba(0,0,0,0.3)",borderRadius:8,overflow:"hidden",
+            display:"flex",alignItems:"center",justifyContent:"center"}}>
+            {/* Target line */}
+            <div style={{position:"absolute",top:"50%",left:0,right:0,height:1,background:"rgba(255,255,255,0.15)"}}/>
+            <div style={{position:"absolute",top:"50%",right:12,transform:"translateY(-50%)",color:"#9CA3AF",fontSize:8,fontFamily:"'IBM Plex Mono',monospace"}}>TARGET</div>
+            {/* Club face representation */}
+            <div style={{width:40,height:6,background:GOLD,borderRadius:2,position:"relative"}}>
+              <div style={{position:"absolute",top:-14,left:"50%",transform:"translateX(-50%)",color:GOLD,fontSize:8,fontFamily:"'IBM Plex Mono',monospace",whiteSpace:"nowrap"}}>FACE</div>
+              <div style={{position:"absolute",bottom:-14,left:"50%",transform:"translateX(-50%)",color:"#9CA3AF",fontSize:7,fontFamily:"'IBM Plex Mono',monospace",whiteSpace:"nowrap"}}>LEADING EDGE</div>
+            </div>
+            {/* Path arrow */}
+            <div style={{position:"absolute",top:"30%",left:"20%",width:"60%",height:1,background:"#60A5FA80",transform:"rotate(-5deg)"}}>
+              <div style={{position:"absolute",right:-2,top:-4,color:"#60A5FA",fontSize:10}}>→</div>
+            </div>
+            <div style={{position:"absolute",top:"22%",left:"22%",color:"#60A5FA",fontSize:8,fontFamily:"'IBM Plex Mono',monospace"}}>PATH</div>
+          </div>
+
+          {/* Combination results */}
+          <div style={{display:"flex",flexDirection:"column",gap:4}}>
+            {facePathInfo.items.map((item,i)=>(
+              <div key={i} style={{display:"flex",alignItems:"center",justifyContent:"space-between",
+                padding:"6px 10px",borderRadius:5,background:"rgba(0,0,0,0.2)"}}>
+                <div style={{color:"#D1D5DB",fontSize:10,fontFamily:"'IBM Plex Mono',monospace"}}>{item.label}</div>
+                <div style={{color:item.color,fontSize:10,fontWeight:700,fontFamily:"'IBM Plex Mono',monospace"}}>{item.result}</div>
+              </div>
+            ))}
+          </div>
+
+          {/* Principles */}
+          <div style={{marginTop:4}}>
+            <div style={{color:"#93C5FD",fontFamily:"'IBM Plex Mono',monospace",fontSize:9,letterSpacing:1,marginBottom:6}}>KEY PRINCIPLES</div>
+            {facePathInfo.principles.map((p,i)=>(
+              <div key={i} style={{display:"flex",gap:6,alignItems:"flex-start",marginBottom:5}}>
+                <div style={{width:4,height:4,borderRadius:"50%",background:GOLD,marginTop:5,flexShrink:0}}/>
+                <div style={{color:"#D1D5DB",fontSize:11,lineHeight:1.4}}>{p}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function WindArrow({dir,mph}: {dir:string;mph:number}){
   const a: Record<string,number>={N:0,NE:45,E:90,SE:135,S:180,SW:225,W:270,NW:315};
   const angle=a[dir]||0;
@@ -692,6 +869,7 @@ function ScorecardPanel(){
   const players = usePlayers();
   const course=state.course;
   const par=course.holes.reduce((s,h)=>s+h.par,0);
+  const [matchPlay,setMatchPlay]=useState(false);
 
   const totals = players.map(pk =>
     Object.values(state.scores[pk]).reduce((s,h)=>s+(h.strokes||0),0)
@@ -704,13 +882,118 @@ function ScorecardPanel(){
 
   const nameOf = (pk: PlayerKey) => state.round?.players[PLAYER_KEYS.indexOf(pk)] || pk.toUpperCase();
 
-  // Dynamic grid: hole + par + N player columns
+  // Match play calculations (works for 2+ players, compares each pair against p1)
+  const matchStatus = (() => {
+    if(players.length < 2) return null;
+    const results: {winner:PlayerKey|"halved";holeNum:number}[] = [];
+    let cumulativeScore = 0; // positive = p1 leads, negative = p2 leads
+    const holesRemaining = course.holes.length;
+
+    for(const hole of course.holes){
+      const s1 = state.scores[players[0]][hole.number]?.strokes;
+      const s2 = state.scores[players[1]][hole.number]?.strokes;
+      if(!s1 || !s2){ results.push({winner:"halved",holeNum:hole.number}); continue; }
+      if(s1 < s2){ cumulativeScore++; results.push({winner:players[0],holeNum:hole.number}); }
+      else if(s2 < s1){ cumulativeScore--; results.push({winner:players[1],holeNum:hole.number}); }
+      else { results.push({winner:"halved",holeNum:hole.number}); }
+    }
+
+    const holesPlayed = results.filter(r=>r.winner!=="halved" || (state.scores[players[0]][r.holeNum]?.strokes && state.scores[players[1]][r.holeNum]?.strokes)).length;
+    const holesLeft = holesRemaining - holesPlayed;
+    const leader = cumulativeScore > 0 ? players[0] : cumulativeScore < 0 ? players[1] : null;
+    const margin = Math.abs(cumulativeScore);
+    const dormie = margin === holesLeft && holesLeft > 0;
+    const closed = margin > holesLeft;
+
+    let statusText = "All Square";
+    if(leader){
+      const n = nameOf(leader);
+      if(closed) statusText = `${n} wins ${margin}&${holesLeft}`;
+      else if(dormie) statusText = `${n} ${margin} UP (Dormie)`;
+      else statusText = `${n} ${margin} UP`;
+    }
+
+    return { results, cumulativeScore, leader, margin, statusText, dormie, closed };
+  })();
+
   const cols = `48px 36px ${players.map(()=>"1fr").join(" ")}`;
 
   return(
     <div style={{display:"flex",flexDirection:"column",height:"100%"}}>
+      {/* Mode toggle */}
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"8px 10px",
+        background:"#0A1628",borderBottom:"1px solid rgba(255,255,255,0.06)"}}>
+        <div style={{display:"flex",background:"rgba(255,255,255,0.06)",borderRadius:6,overflow:"hidden"}}>
+          <button onClick={()=>setMatchPlay(false)}
+            style={{padding:"5px 12px",border:"none",cursor:"pointer",fontSize:10,fontFamily:"'IBM Plex Mono',monospace",fontWeight:700,letterSpacing:0.5,
+              background:!matchPlay?NAVY:"transparent",color:!matchPlay?"#fff":"#6B7280"}}>STROKE</button>
+          <button onClick={()=>setMatchPlay(true)}
+            style={{padding:"5px 12px",border:"none",cursor:"pointer",fontSize:10,fontFamily:"'IBM Plex Mono',monospace",fontWeight:700,letterSpacing:0.5,
+              background:matchPlay?NAVY:"transparent",color:matchPlay?"#fff":"#6B7280"}}>MATCH PLAY</button>
+        </div>
+        {matchPlay && matchStatus && (
+          <div style={{color:matchStatus.leader?PLAYER_COLORS[matchStatus.leader]:GOLD,
+            fontFamily:"'IBM Plex Mono',monospace",fontSize:10,fontWeight:700}}>
+            {matchStatus.statusText}
+          </div>
+        )}
+      </div>
+
+      {/* Match play banner */}
+      {matchPlay && matchStatus && (
+        <div style={{background:`linear-gradient(135deg,${NAVY}ee,#0F2444)`,padding:"10px 14px",
+          borderBottom:`1px solid ${GOLD}30`,display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+          <div style={{display:"flex",alignItems:"center",gap:10}}>
+            <div style={{display:"flex",alignItems:"center",gap:6}}>
+              <div style={{width:10,height:10,borderRadius:"50%",background:PLAYER_COLORS[players[0]]}}/>
+              <span style={{color:PLAYER_COLORS[players[0]],fontFamily:"'IBM Plex Mono',monospace",fontSize:11,fontWeight:700}}>
+                {nameOf(players[0])}
+              </span>
+            </div>
+            <span style={{color:"#6B7280",fontSize:10}}>vs</span>
+            <div style={{display:"flex",alignItems:"center",gap:6}}>
+              <div style={{width:10,height:10,borderRadius:"50%",background:PLAYER_COLORS[players[1]]}}/>
+              <span style={{color:PLAYER_COLORS[players[1]],fontFamily:"'IBM Plex Mono',monospace",fontSize:11,fontWeight:700}}>
+                {nameOf(players[1])}
+              </span>
+            </div>
+          </div>
+          <div style={{background:`${GOLD}20`,border:`1px solid ${GOLD}60`,borderRadius:6,padding:"4px 10px",
+            fontFamily:"'IBM Plex Mono',monospace",fontSize:12,fontWeight:700,
+            color:matchStatus.leader?PLAYER_COLORS[matchStatus.leader]:GOLD}}>
+            {matchStatus.margin === 0 ? "AS" : `${matchStatus.margin} UP`}
+          </div>
+        </div>
+      )}
+
+      {/* Match play hole-by-hole results */}
+      {matchPlay && matchStatus && (
+        <div style={{display:"flex",gap:2,padding:"8px 10px",flexWrap:"wrap",borderBottom:"1px solid rgba(255,255,255,0.06)"}}>
+          {matchStatus.results.map((r,i)=>{
+            const s1 = state.scores[players[0]][r.holeNum]?.strokes;
+            const s2 = state.scores[players[1]][r.holeNum]?.strokes;
+            const played = s1 && s2;
+            const bg = !played ? "rgba(255,255,255,0.04)" :
+              r.winner === players[0] ? `${PLAYER_COLORS[players[0]]}30` :
+              r.winner === players[1] ? `${PLAYER_COLORS[players[1]]}30` : "rgba(255,255,255,0.08)";
+            const border = !played ? "rgba(255,255,255,0.08)" :
+              r.winner === players[0] ? PLAYER_COLORS[players[0]] :
+              r.winner === players[1] ? PLAYER_COLORS[players[1]] : "rgba(255,255,255,0.2)";
+            return(
+              <div key={i} style={{width:26,height:26,borderRadius:5,background:bg,border:`1px solid ${border}`,
+                display:"flex",alignItems:"center",justifyContent:"center",
+                fontFamily:"'IBM Plex Mono',monospace",fontSize:9,fontWeight:700,
+                color:!played?"#4B5563": r.winner==="halved"?"#9CA3AF":PLAYER_COLORS[r.winner as PlayerKey]}}>
+                {!played?"—":r.winner==="halved"?"½":r.winner===players[0]?"W":"L"}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Standard scorecard grid */}
       <div style={{display:"grid",gridTemplateColumns:cols,background:"#0F2444",padding:"7px 10px",
-        borderRadius:"8px 8px 0 0",borderBottom:"1px solid rgba(255,255,255,0.1)",gap:4}}>
+        borderRadius:matchPlay?"0":"8px 8px 0 0",borderBottom:"1px solid rgba(255,255,255,0.1)",gap:4}}>
         {["HOLE","PAR",...players.map(nameOf)].map((h,i)=>(
           <div key={i} style={{color:i>=2?PLAYER_COLORS[players[i-2]]:"#93C5FD",
             fontFamily:"'IBM Plex Mono',monospace",fontSize:9,fontWeight:700,
@@ -1123,7 +1406,7 @@ function RoundScreen(){
   const players = usePlayers();
   const course=state.course;
   const hole=course.holes.find(h=>h.number===state.currentHole)||course.holes[0];
-  const PANELS=[{id:"map",l:"Map"},{id:"club",l:"Club"},{id:"ar",l:"AR Glasses"},{id:"stats",l:"Stats"},{id:"card",l:"Card"}];
+  const PANELS=[{id:"map",l:"Map"},{id:"club",l:"Club"},{id:"gapp",l:"GAPP"},{id:"ar",l:"AR Glasses"},{id:"stats",l:"Stats"},{id:"card",l:"Card"}];
 
   const [shotFlash, setShotFlash]=useState(false);
   const shotFlashTimer=useRef<ReturnType<typeof setTimeout>|null>(null);
@@ -1252,6 +1535,7 @@ function RoundScreen(){
       <div style={{flex:1,padding:12,overflowY:"auto"}}>
         {state.panel==="map"  &&<ShotMap hole={hole} ballPositions={ballPositions} cart={cart}/>}
         {state.panel==="club" &&<ClubPanel hole={hole} autoYards={autoDistanceToPin}/>}
+        {state.panel==="gapp" &&<GAPPPanel/>}
         {state.panel==="ar"   &&<GlassesPanel
           roundId={state.roundId}
           hole={hole}
