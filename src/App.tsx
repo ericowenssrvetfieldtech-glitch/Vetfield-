@@ -471,6 +471,81 @@ function ShotMap({hole, ballPositions, cart}: {hole: Hole; ballPositions?: Recor
       }
     }
 
+    // Tornado whirlwind when ball is in the cup
+    const pinThreshold = 0.03; // normalized distance threshold to consider "holed"
+    let holedPlayer: PlayerKey | null = null;
+    for(const pk of players){
+      const shots = shotsByPlayer[pk] || [];
+      if(shots.length > 0){
+        const last = shots[shots.length - 1];
+        const dx = last.x - hole.pin.x;
+        const dy = last.y - hole.pin.y;
+        if(Math.sqrt(dx*dx + dy*dy) < pinThreshold){
+          holedPlayer = pk;
+          break;
+        }
+      }
+    }
+
+    if(holedPlayer){
+      const now = Date.now();
+      const t = (now % 2000) / 2000;
+      const px = pin.x, py = pin.y;
+
+      // Outer glow pulse
+      const glowR = 35 + Math.sin(t * Math.PI * 2) * 8;
+      const glowG = ctx.createRadialGradient(px, py, 0, px, py, glowR);
+      glowG.addColorStop(0, "rgba(251,146,60,0.4)");
+      glowG.addColorStop(0.5, "rgba(251,146,60,0.15)");
+      glowG.addColorStop(1, "transparent");
+      ctx.fillStyle = glowG;
+      ctx.beginPath(); ctx.arc(px, py, glowR, 0, Math.PI * 2); ctx.fill();
+
+      // Spinning spiral arms (tornado vortex)
+      for(let arm = 0; arm < 5; arm++){
+        const baseAngle = t * Math.PI * 2 + (arm / 5) * Math.PI * 2;
+        ctx.save();
+        ctx.globalAlpha = 0.7 - arm * 0.08;
+        ctx.strokeStyle = arm % 2 === 0 ? "#FB923C" : "#FDBA74";
+        ctx.lineWidth = 2.5 - arm * 0.3;
+        ctx.beginPath();
+        for(let s = 0; s < 40; s++){
+          const frac = s / 40;
+          const r = 4 + frac * 28;
+          const angle = baseAngle + frac * Math.PI * 3;
+          const x = px + Math.cos(angle) * r;
+          const y = py + Math.sin(angle) * r * 0.7 - frac * 12;
+          if(s === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+        }
+        ctx.stroke();
+        ctx.restore();
+      }
+
+      // Particles swirling outward
+      for(let i = 0; i < 12; i++){
+        const particleT = (t + i / 12) % 1;
+        const angle = particleT * Math.PI * 4 + i * 1.3;
+        const r = 6 + particleT * 26;
+        const x = px + Math.cos(angle) * r;
+        const y = py + Math.sin(angle) * r * 0.6 - particleT * 18;
+        const size = 1.5 + (1 - particleT) * 2;
+        const alpha = 1 - particleT;
+        ctx.fillStyle = `rgba(251,146,60,${alpha})`;
+        ctx.beginPath(); ctx.arc(x, y, size, 0, Math.PI * 2); ctx.fill();
+      }
+
+      // Center "IN THE CUP" burst
+      ctx.save();
+      ctx.fillStyle = "#FB923C";
+      ctx.font = "bold 10px 'IBM Plex Mono',monospace";
+      ctx.textAlign = "center";
+      const labelY = py + 32 + Math.sin(t * Math.PI * 4) * 2;
+      ctx.shadowColor = "#FB923C"; ctx.shadowBlur = 8;
+      ctx.fillText("IN THE CUP!", px, labelY);
+      ctx.restore();
+      ctx.textAlign = "left";
+    }
+
     const tee=p(hole.tee);
     ctx.fillStyle="#fff"; ctx.strokeStyle=NAVY; ctx.lineWidth=2;
     ctx.beginPath(); ctx.arc(tee.x,tee.y,8,0,Math.PI*2); ctx.fill(); ctx.stroke();
@@ -492,7 +567,14 @@ function ShotMap({hole, ballPositions, cart}: {hole: Hole; ballPositions?: Recor
   useEffect(()=>{draw();},[draw]);
 
   useEffect(()=>{
-    const hasLive = (ballPositions && Object.keys(ballPositions).length>0) || cart;
+    const hasHoled = players.some(pk=>{
+      const shots = shotsByPlayer[pk] || [];
+      if(shots.length === 0) return false;
+      const last = shots[shots.length - 1];
+      const dx = last.x - hole.pin.x, dy = last.y - hole.pin.y;
+      return Math.sqrt(dx*dx + dy*dy) < 0.03;
+    });
+    const hasLive = (ballPositions && Object.keys(ballPositions).length>0) || cart || hasHoled;
     if(!hasLive) return;
     let raf: number;
     const loop=()=>{ draw(); raf=requestAnimationFrame(loop); };
