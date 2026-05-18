@@ -7,7 +7,7 @@ import GlassesPanel from "./GlassesPanel";
 import { useAuth } from "./AuthContext";
 import { AuthScreen } from "./AuthScreen";
 import {
-  fetchCourses, createRound, updateRoundState, completeRound, fetchLatestActiveRound, fetchCompletedRounds, recordShot,
+  supabase, fetchCourses, createRound, updateRoundState, completeRound, fetchLatestActiveRound, fetchCompletedRounds, recordShot,
 } from "./lib/supabase";
 import type { Course, RoundRow } from "./lib/supabase";
 
@@ -1355,9 +1355,22 @@ function HomeScreen(){
 
   const PLAYER_BORDER_COLORS = [PLAYER_COLORS.p1, PLAYER_COLORS.p2, PLAYER_COLORS.p3, PLAYER_COLORS.p4];
 
+  const auth=useAuth();
+
   return(
     <div style={{minHeight:"100vh",background:"radial-gradient(ellipse at 30% 20%, #0F2444 0%, #050E1A 60%)",
-      display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
+      display:"flex",alignItems:"center",justifyContent:"center",padding:20,position:"relative"}}>
+      {/* Sign-out corner button */}
+      <button onClick={()=>auth.signOut()}
+        style={{position:"absolute",top:16,right:16,padding:"6px 12px",borderRadius:6,
+          border:"1px solid rgba(255,255,255,0.1)",background:"rgba(255,255,255,0.04)",
+          color:"#9CA3AF",cursor:"pointer",fontSize:10,fontFamily:"'IBM Plex Mono',monospace",
+          transition:"background 0.15s"}}
+        onMouseEnter={e=>(e.currentTarget.style.background="rgba(255,255,255,0.1)")}
+        onMouseLeave={e=>(e.currentTarget.style.background="rgba(255,255,255,0.04)")}>
+        Sign Out
+      </button>
+
       <div style={{width:"100%",maxWidth:440,display:"flex",flexDirection:"column",alignItems:"center",gap:18}}>
         <div style={{width:72,height:72,background:NAVY,borderRadius:16,display:"flex",alignItems:"center",justifyContent:"center",
           boxShadow:`0 0 40px ${NAVY}80`,fontSize:32,border:`2px solid ${GOLD}40`}}>⛳</div>
@@ -1661,14 +1674,55 @@ function RoundScreen(){
 // ── REVIEW SCREEN ─────────────────────────────────────────────────────────────
 function ReviewScreen(){
   const {state,dispatch}=useGame();
+  const auth=useAuth();
   const players = usePlayers();
   const course=state.course;
   const par=course.holes.reduce((s,h)=>s+h.par,0);
   const nameOf = (pk: PlayerKey) => state.round?.players[PLAYER_KEYS.indexOf(pk)] || pk.toUpperCase();
+  const [emailStatus,setEmailStatus]=useState<"idle"|"sending"|"sent"|"error">("idle");
+  const [emailError,setEmailError]=useState<string|null>(null);
 
   const totals = players.map(pk =>
     Object.values(state.scores[pk]).reduce((s,h)=>s+(h.strokes||0),0)
   );
+
+  const handleEmailSummary = async () => {
+    const email = auth.user?.email;
+    if(!email){ setEmailError("No email on account"); setEmailStatus("error"); return; }
+    setEmailStatus("sending");
+    setEmailError(null);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token || import.meta.env.VITE_SUPABASE_ANON_KEY;
+      const url = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/send-round-summary`;
+      const res = await fetch(url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`,
+          "apikey": import.meta.env.VITE_SUPABASE_ANON_KEY,
+        },
+        body: JSON.stringify({
+          email,
+          courseName: course.name,
+          date: state.round?.date || new Date().toLocaleDateString(),
+          players: players.map(pk => nameOf(pk)),
+          holes: course.holes.map(h => ({number:h.number, par:h.par, yards:h.yards})),
+          scores: state.scores,
+        }),
+      });
+      if(res.ok){
+        setEmailStatus("sent");
+      } else {
+        const body = await res.json().catch(()=>({error:"Unknown error"}));
+        setEmailError(body.error || "Failed to send");
+        setEmailStatus("error");
+      }
+    } catch(e){
+      setEmailError(String(e));
+      setEmailStatus("error");
+    }
+  };
 
   return(
     <div style={{minHeight:"100vh",background:"#050E1A",padding:16,display:"flex",flexDirection:"column",gap:14}}>
@@ -1697,6 +1751,37 @@ function ReviewScreen(){
       </div>
 
       <ScorecardPanel/>
+
+      {/* Email summary */}
+      <div style={{background:"rgba(255,255,255,0.03)",borderRadius:10,padding:"14px 16px",
+        border:"1px solid rgba(200,150,12,0.15)"}}>
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+          <div>
+            <div style={{color:"#fff",fontFamily:"'Rajdhani',sans-serif",fontSize:14,fontWeight:600}}>Email Round Summary</div>
+            <div style={{color:"#6B7280",fontFamily:"'IBM Plex Mono',monospace",fontSize:10,marginTop:2}}>
+              Send scorecard to {auth.user?.email || "your email"}
+            </div>
+          </div>
+          <button onClick={handleEmailSummary}
+            disabled={emailStatus==="sending"||emailStatus==="sent"}
+            style={{padding:"9px 16px",borderRadius:8,border:"none",cursor:emailStatus==="sending"||emailStatus==="sent"?"default":"pointer",
+              background: emailStatus==="sent" ? "rgba(76,175,80,0.15)"
+                : emailStatus==="error" ? "rgba(248,113,113,0.15)"
+                : `linear-gradient(135deg,${GOLD},#9A7200)`,
+              color: emailStatus==="sent" ? "#4CAF50" : emailStatus==="error" ? "#F87171" : "#fff",
+              fontSize:12,fontFamily:"'IBM Plex Mono',monospace",fontWeight:600,
+              opacity: emailStatus==="sending" ? 0.6 : 1,
+              transition:"all 0.15s"}}>
+            {emailStatus==="idle" && "Send"}
+            {emailStatus==="sending" && "Sending..."}
+            {emailStatus==="sent" && "Sent!"}
+            {emailStatus==="error" && "Retry"}
+          </button>
+        </div>
+        {emailError && (
+          <div style={{marginTop:8,color:"#F87171",fontSize:10,fontFamily:"'IBM Plex Mono',monospace"}}>{emailError}</div>
+        )}
+      </div>
 
       <div style={{display:"flex",gap:10}}>
         <button onClick={()=>dispatch({type:"RESET"})}
