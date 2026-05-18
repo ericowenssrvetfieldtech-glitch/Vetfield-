@@ -5,6 +5,11 @@ const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY as string;
 
 export const supabase = createClient(url, anonKey);
 
+async function getCurrentUserId(): Promise<string | null> {
+  const { data: { user } } = await supabase.auth.getUser();
+  return user?.id ?? null;
+}
+
 // ── Courses ───────────────────────────────────────────────────────────────────
 export interface HolePoint { x: number; y: number }
 export interface HoleHazard { type: "water" | "bunker" | "trees"; pts: HolePoint[] }
@@ -117,10 +122,12 @@ export async function createRound(args: {
   state: Record<string, unknown>;
 }): Promise<RoundRow | null> {
   const device_id = getDeviceId();
+  const user_id = await getCurrentUserId();
   const { data, error } = await supabase
     .from("rounds")
     .insert({
       device_id,
+      user_id,
       course_slug: args.course.slug,
       course_name: args.course.name,
       player1_name: args.player1_name,
@@ -145,17 +152,19 @@ export async function updateRoundState(
   state: Record<string, unknown>,
 ): Promise<void> {
   const device_id = getDeviceId();
+  const user_id = await getCurrentUserId();
   const { error } = await supabase
     .from("rounds")
     .update({ state, updated_at: new Date().toISOString() })
     .eq("id", roundId)
-    .eq("device_id", device_id);
+    .or(`device_id.eq.${device_id}${user_id ? `,user_id.eq.${user_id}` : ""}`);
 
   if (error) console.warn("[supabase] updateRoundState failed:", error.message);
 }
 
 export async function completeRound(roundId: string): Promise<void> {
   const device_id = getDeviceId();
+  const user_id = await getCurrentUserId();
   const { error } = await supabase
     .from("rounds")
     .update({
@@ -164,7 +173,7 @@ export async function completeRound(roundId: string): Promise<void> {
       updated_at: new Date().toISOString(),
     })
     .eq("id", roundId)
-    .eq("device_id", device_id);
+    .or(`device_id.eq.${device_id}${user_id ? `,user_id.eq.${user_id}` : ""}`);
 
   if (error) console.warn("[supabase] completeRound failed:", error.message);
 }
@@ -188,7 +197,8 @@ export interface ShotInsert {
 
 export async function recordShot(args: ShotInsert): Promise<void> {
   const device_id = getDeviceId();
-  const { error } = await supabase.from("shots").insert({ ...args, device_id });
+  const user_id = await getCurrentUserId();
+  const { error } = await supabase.from("shots").insert({ ...args, device_id, user_id });
   if (error) console.warn("[supabase] recordShot failed:", error.message);
 }
 
@@ -273,14 +283,18 @@ export async function fetchRecentAiQueries(roundId: string | null, limit = 20): 
 
 export async function fetchLatestActiveRound(): Promise<RoundRow | null> {
   const device_id = getDeviceId();
-  const { data, error } = await supabase
+  const user_id = await getCurrentUserId();
+  let q = supabase
     .from("rounds")
     .select("*")
-    .eq("device_id", device_id)
     .eq("status", "active")
     .order("updated_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
+    .limit(1);
+
+  if (user_id) q = q.eq("user_id", user_id);
+  else q = q.eq("device_id", device_id);
+
+  const { data, error } = await q.maybeSingle();
 
   if (error) {
     console.warn("[supabase] fetchLatestActiveRound failed:", error.message);
@@ -291,13 +305,18 @@ export async function fetchLatestActiveRound(): Promise<RoundRow | null> {
 
 export async function fetchCompletedRounds(): Promise<RoundRow[]> {
   const device_id = getDeviceId();
-  const { data, error } = await supabase
+  const user_id = await getCurrentUserId();
+  let q = supabase
     .from("rounds")
     .select("*")
-    .eq("device_id", device_id)
     .eq("status", "completed")
     .order("ended_at", { ascending: false })
     .limit(50);
+
+  if (user_id) q = q.eq("user_id", user_id);
+  else q = q.eq("device_id", device_id);
+
+  const { data, error } = await q;
 
   if (error) {
     console.warn("[supabase] fetchCompletedRounds failed:", error.message);

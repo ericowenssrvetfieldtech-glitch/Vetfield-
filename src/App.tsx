@@ -4,6 +4,8 @@ import type { ShotDetectedPayload, BallPositionPayload, CartPayload } from "./us
 import { HubStatusDot, HubStatusBar } from "./HubStatus";
 import AddCourseScreen from "./AddCourseScreen";
 import GlassesPanel from "./GlassesPanel";
+import { useAuth } from "./AuthContext";
+import { AuthScreen } from "./AuthScreen";
 import {
   fetchCourses, createRound, updateRoundState, completeRound, fetchLatestActiveRound, fetchCompletedRounds, recordShot,
 } from "./lib/supabase";
@@ -1471,15 +1473,26 @@ function HomeScreen(){
           {starting?"STARTING...":"START ROUND"}
         </button>
 
-        <button onClick={()=>dispatch({type:"SET_VIEW",v:"history"})}
-          style={{width:"100%",padding:"12px 16px",borderRadius:10,cursor:"pointer",
-            border:`1px solid ${NAVY}`,background:"rgba(15,36,68,0.4)",
-            color:"#93C5FD",fontFamily:"'Rajdhani',sans-serif",fontWeight:600,fontSize:15,letterSpacing:1.5,
-            display:"flex",alignItems:"center",justifyContent:"center",gap:8,transition:"background 0.15s"}}
-          onMouseEnter={e=>(e.currentTarget.style.background="rgba(15,36,68,0.7)")}
-          onMouseLeave={e=>(e.currentTarget.style.background="rgba(15,36,68,0.4)")}>
-          ROUND HISTORY
-        </button>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+          <button onClick={()=>dispatch({type:"SET_VIEW",v:"history"})}
+            style={{padding:"12px 16px",borderRadius:10,cursor:"pointer",
+              border:`1px solid ${NAVY}`,background:"rgba(15,36,68,0.4)",
+              color:"#93C5FD",fontFamily:"'Rajdhani',sans-serif",fontWeight:600,fontSize:14,letterSpacing:1,
+              display:"flex",alignItems:"center",justifyContent:"center",gap:6,transition:"background 0.15s"}}
+            onMouseEnter={e=>(e.currentTarget.style.background="rgba(15,36,68,0.7)")}
+            onMouseLeave={e=>(e.currentTarget.style.background="rgba(15,36,68,0.4)")}>
+            HISTORY
+          </button>
+          <button onClick={()=>dispatch({type:"SET_VIEW",v:"profile"})}
+            style={{padding:"12px 16px",borderRadius:10,cursor:"pointer",
+              border:`1px solid ${NAVY}`,background:"rgba(15,36,68,0.4)",
+              color:GOLD,fontFamily:"'Rajdhani',sans-serif",fontWeight:600,fontSize:14,letterSpacing:1,
+              display:"flex",alignItems:"center",justifyContent:"center",gap:6,transition:"background 0.15s"}}
+            onMouseEnter={e=>(e.currentTarget.style.background="rgba(15,36,68,0.7)")}
+            onMouseLeave={e=>(e.currentTarget.style.background="rgba(15,36,68,0.4)")}>
+            MY STATS
+          </button>
+        </div>
 
         <InstallButton/>
 
@@ -1881,6 +1894,191 @@ function HistoryScreen(){
   );
 }
 
+// ── PROFILE / STATS SCREEN ───────────────────────────────────────────────────
+function ProfileScreen(){
+  const {dispatch}=useGame();
+  const auth=useAuth();
+  const [rounds,setRounds]=useState<RoundRow[]>([]);
+  const [loading,setLoading]=useState(true);
+
+  useEffect(()=>{
+    fetchCompletedRounds().then(r=>{setRounds(r);setLoading(false);});
+  },[]);
+
+  const now=new Date();
+  const todayStart=new Date(now.getFullYear(),now.getMonth(),now.getDate()).getTime();
+  const weekStart=todayStart - (now.getDay()*86400000);
+  const monthStart=new Date(now.getFullYear(),now.getMonth(),1).getTime();
+
+  const daily=rounds.filter(r=>r.ended_at && new Date(r.ended_at).getTime()>=todayStart);
+  const weekly=rounds.filter(r=>r.ended_at && new Date(r.ended_at).getTime()>=weekStart);
+  const monthly=rounds.filter(r=>r.ended_at && new Date(r.ended_at).getTime()>=monthStart);
+
+  const calcAvg=(list:RoundRow[])=>{
+    if(!list.length) return null;
+    let totalStrokes=0, totalPar=0, count=0;
+    list.forEach(r=>{
+      const st=r.state as Record<string,unknown>;
+      const scores=st.scores as Record<string,Record<string,{strokes:number}>>|undefined;
+      const course=st.course as Course|undefined;
+      if(!scores || !course) return;
+      const par=course.holes.reduce((s,h)=>s+h.par,0);
+      const p1Scores=scores.p1;
+      if(p1Scores){
+        const total=Object.values(p1Scores).reduce((s,h)=>s+(h.strokes||0),0);
+        if(total>0){ totalStrokes+=total; totalPar+=par; count++; }
+      }
+    });
+    if(!count) return null;
+    return { avg: Math.round(totalStrokes/count), diff: Math.round((totalStrokes-totalPar)/count*10)/10, count };
+  };
+
+  const dailyStats=calcAvg(daily);
+  const weeklyStats=calcAvg(weekly);
+  const monthlyStats=calcAvg(monthly);
+  const allTimeStats=calcAvg(rounds);
+
+  const courseBreakdown=()=>{
+    const map:Record<string,{name:string;rounds:number;bestScore:number;bestDiff:number;avgScore:number}> = {};
+    rounds.forEach(r=>{
+      const st=r.state as Record<string,unknown>;
+      const scores=st.scores as Record<string,Record<string,{strokes:number}>>|undefined;
+      const course=st.course as Course|undefined;
+      if(!scores || !course) return;
+      const par=course.holes.reduce((s,h)=>s+h.par,0);
+      const p1Scores=scores.p1;
+      if(!p1Scores) return;
+      const total=Object.values(p1Scores).reduce((s,h)=>s+(h.strokes||0),0);
+      if(total===0) return;
+      if(!map[r.course_slug]) map[r.course_slug]={name:r.course_name,rounds:0,bestScore:Infinity,bestDiff:Infinity,avgScore:0};
+      const entry=map[r.course_slug];
+      entry.rounds++;
+      entry.avgScore+=total;
+      if(total<entry.bestScore){ entry.bestScore=total; entry.bestDiff=total-par; }
+    });
+    return Object.values(map).map(e=>({...e,avgScore:Math.round(e.avgScore/e.rounds)}));
+  };
+  const courses=courseBreakdown();
+
+  return(
+    <div style={{minHeight:"100vh",background:"radial-gradient(ellipse at 30% 20%, #0F2444 0%, #050E1A 60%)",
+      padding:16,display:"flex",flexDirection:"column",gap:14}}>
+      {/* Header */}
+      <div style={{display:"flex",alignItems:"center",gap:10}}>
+        <button onClick={()=>dispatch({type:"SET_VIEW",v:"home"})}
+          style={{padding:"8px 12px",borderRadius:6,border:"none",background:"rgba(255,255,255,0.08)",
+            color:"#fff",cursor:"pointer",fontSize:12,fontFamily:"'IBM Plex Mono',monospace"}}>← Home</button>
+        <div style={{flex:1}}>
+          <div style={{color:"#fff",fontFamily:"'Rajdhani',sans-serif",fontWeight:700,fontSize:22}}>My Stats</div>
+          <div style={{color:"#9CA3AF",fontSize:11,fontFamily:"'IBM Plex Mono',monospace"}}>{auth.user?.email}</div>
+        </div>
+        <button onClick={()=>auth.signOut()}
+          style={{padding:"7px 12px",borderRadius:6,border:"1px solid rgba(248,113,113,0.3)",background:"rgba(248,113,113,0.08)",
+            color:"#F87171",cursor:"pointer",fontSize:11,fontFamily:"'IBM Plex Mono',monospace"}}>Sign Out</button>
+      </div>
+
+      {loading ? (
+        <div style={{textAlign:"center",padding:40,color:"#9CA3AF",fontFamily:"'IBM Plex Mono',monospace",fontSize:12}}>Loading stats...</div>
+      ):(
+        <>
+          {/* Period stats */}
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+            {[
+              {label:"Today",stats:dailyStats},
+              {label:"This Week",stats:weeklyStats},
+              {label:"This Month",stats:monthlyStats},
+              {label:"All Time",stats:allTimeStats},
+            ].map(({label,stats})=>(
+              <div key={label} style={{background:"rgba(255,255,255,0.04)",borderRadius:10,padding:"14px 14px",
+                border:"1px solid rgba(255,255,255,0.06)"}}>
+                <div style={{color:"#9CA3AF",fontFamily:"'IBM Plex Mono',monospace",fontSize:9,fontWeight:700,letterSpacing:1,marginBottom:6}}>{label.toUpperCase()}</div>
+                {stats ? (
+                  <>
+                    <div style={{color:"#fff",fontSize:28,fontWeight:700,fontFamily:"'Rajdhani',sans-serif"}}>{stats.avg}</div>
+                    <div style={{display:"flex",gap:8,alignItems:"center",marginTop:2}}>
+                      <span style={{color:stats.diff<0?"#4CAF50":stats.diff>0?"#F87171":"#93C5FD",
+                        fontFamily:"'IBM Plex Mono',monospace",fontSize:11,fontWeight:700}}>
+                        {stats.diff===0?"Even":`${stats.diff>0?"+":""}${stats.diff}`}
+                      </span>
+                      <span style={{color:"#6B7280",fontFamily:"'IBM Plex Mono',monospace",fontSize:10}}>
+                        {stats.count} rd{stats.count!==1?"s":""}
+                      </span>
+                    </div>
+                  </>
+                ):(
+                  <div style={{color:"#4B5563",fontSize:12,fontFamily:"'IBM Plex Mono',monospace"}}>No rounds</div>
+                )}
+              </div>
+            ))}
+          </div>
+
+          {/* Course breakdown */}
+          {courses.length > 0 && (
+            <div>
+              <div style={{color:"#9CA3AF",fontFamily:"'IBM Plex Mono',monospace",fontSize:10,fontWeight:700,letterSpacing:1,marginBottom:8}}>BY COURSE</div>
+              <div style={{display:"flex",flexDirection:"column",gap:6}}>
+                {courses.sort((a,b)=>b.rounds-a.rounds).map(c=>(
+                  <div key={c.name} style={{background:"rgba(255,255,255,0.03)",borderRadius:8,padding:"12px 14px",
+                    border:"1px solid rgba(255,255,255,0.06)",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                    <div>
+                      <div style={{color:"#fff",fontFamily:"'Rajdhani',sans-serif",fontWeight:600,fontSize:15}}>{c.name}</div>
+                      <div style={{color:"#6B7280",fontFamily:"'IBM Plex Mono',monospace",fontSize:10,marginTop:2}}>
+                        {c.rounds} round{c.rounds!==1?"s":""} played
+                      </div>
+                    </div>
+                    <div style={{textAlign:"right"}}>
+                      <div style={{color:"#fff",fontFamily:"'Rajdhani',sans-serif",fontWeight:700,fontSize:18}}>{c.avgScore}</div>
+                      <div style={{color:c.bestDiff<0?"#4CAF50":c.bestDiff>0?"#F87171":"#93C5FD",
+                        fontFamily:"'IBM Plex Mono',monospace",fontSize:10}}>
+                        Best: {c.bestScore} ({c.bestDiff===0?"E":`${c.bestDiff>0?"+":""}${c.bestDiff}`})
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Recent trend */}
+          {rounds.length >= 3 && (
+            <div>
+              <div style={{color:"#9CA3AF",fontFamily:"'IBM Plex Mono',monospace",fontSize:10,fontWeight:700,letterSpacing:1,marginBottom:8}}>RECENT TREND</div>
+              <div style={{background:"rgba(255,255,255,0.03)",borderRadius:8,padding:"14px 14px",
+                border:"1px solid rgba(255,255,255,0.06)"}}>
+                <div style={{display:"flex",alignItems:"flex-end",gap:4,height:60}}>
+                  {rounds.slice(0,10).reverse().map((r,i)=>{
+                    const st=r.state as Record<string,unknown>;
+                    const scores=st.scores as Record<string,Record<string,{strokes:number}>>|undefined;
+                    const course=st.course as Course|undefined;
+                    if(!scores || !course) return <div key={i} style={{flex:1,height:4,background:"#1F2937",borderRadius:2}}/>;
+                    const par=course.holes.reduce((s,h)=>s+h.par,0);
+                    const total=scores.p1?Object.values(scores.p1).reduce((s,h)=>s+(h.strokes||0),0):0;
+                    if(total===0) return <div key={i} style={{flex:1,height:4,background:"#1F2937",borderRadius:2}}/>;
+                    const diff=total-par;
+                    const barH=Math.max(8,Math.min(56,30+diff*4));
+                    const col=diff<0?"#4CAF50":diff>0?"#F87171":"#93C5FD";
+                    return(
+                      <div key={i} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:2}}>
+                        <div style={{fontSize:8,color:"#6B7280",fontFamily:"'IBM Plex Mono',monospace"}}>
+                          {diff===0?"E":`${diff>0?"+":""}${diff}`}
+                        </div>
+                        <div style={{width:"100%",height:barH,background:col,borderRadius:3,opacity:0.8}}/>
+                      </div>
+                    );
+                  })}
+                </div>
+                <div style={{color:"#6B7280",fontSize:9,fontFamily:"'IBM Plex Mono',monospace",marginTop:6,textAlign:"center"}}>
+                  Last {Math.min(rounds.length,10)} rounds
+                </div>
+              </div>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
 // ── ROOT ──────────────────────────────────────────────────────────────────────
 function PersistenceBridge(){
   const {state}=useGame();
@@ -1908,7 +2106,21 @@ function PersistenceBridge(){
 }
 
 export default function App(){
+  const auth = useAuth();
   const [state,dispatch]=useReducer(reducer,init);
+
+  if(auth.loading){
+    return(
+      <div style={{minHeight:"100vh",background:"#050E1A",display:"flex",alignItems:"center",justifyContent:"center"}}>
+        <div style={{color:"#9CA3AF",fontFamily:"'IBM Plex Mono',monospace",fontSize:12}}>Loading...</div>
+      </div>
+    );
+  }
+
+  if(!auth.user){
+    return <AuthScreen/>;
+  }
+
   return(
     <Ctx.Provider value={{state,dispatch}}>
       <style>{CSS}</style>
@@ -1922,6 +2134,7 @@ export default function App(){
         {state.view==="round"     &&<RoundScreen/>}
         {state.view==="review"    &&<ReviewScreen/>}
         {state.view==="history"   &&<HistoryScreen/>}
+        {state.view==="profile"   &&<ProfileScreen/>}
       </div>
     </Ctx.Provider>
   );
