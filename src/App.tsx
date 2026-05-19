@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, useCallback, useReducer, createContext, useContext } from "react";
+import { Analytics } from "@vercel/analytics/react";
 import { useHubSocket } from "./useHubSocket";
 import type { ShotDetectedPayload, BallPositionPayload, CartPayload } from "./useHubSocket";
 import { HubStatusDot, HubStatusBar } from "./HubStatus";
@@ -2581,6 +2582,7 @@ export default function App(){
         {state.view==="history"   &&<HistoryScreen/>}
         {state.view==="profile"   &&<ProfileScreen/>}
       </div>
+      <Analytics />
     </Ctx.Provider>
   );
 }
