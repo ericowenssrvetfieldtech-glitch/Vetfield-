@@ -637,7 +637,8 @@ function ShotMap({hole, ballPositions, cart}: {hole: Hole; ballPositions?: Recor
 }
 
 // ── CLUB RECOMMENDER ─────────────────────────────────────────────────────────
-function ClubPanel({hole, autoYards}: {hole: Hole; autoYards: number | null}){
+function ClubPanel({hole: _hole, autoYards}: {hole: Hole; autoYards: number | null}){
+  void _hole;
   const {state,dispatch}=useGame();
   const [yards,setYards]=useState("");
   const [manual,setManual]=useState(false);
@@ -1681,10 +1682,48 @@ function ReviewScreen(){
   const nameOf = (pk: PlayerKey) => state.round?.players[PLAYER_KEYS.indexOf(pk)] || pk.toUpperCase();
   const [emailStatus,setEmailStatus]=useState<"idle"|"sending"|"sent"|"error">("idle");
   const [emailError,setEmailError]=useState<string|null>(null);
+  const [reviewTab,setReviewTab]=useState<"scorecard"|"stats">("scorecard");
 
   const totals = players.map(pk =>
     Object.values(state.scores[pk]).reduce((s,h)=>s+(h.strokes||0),0)
   );
+
+  // Per-player round stats
+  const playerStats = (pk: PlayerKey) => {
+    const scores = state.scores[pk];
+    const shots = state.shots[pk];
+    let birdies=0, pars=0, bogeys=0, doubles=0, worse=0;
+    let totalShots=0, longestShot=0, totalDist=0, shotCount=0;
+    let holesScored=0;
+
+    course.holes.forEach(h=>{
+      const s=scores[h.number]?.strokes;
+      if(!s) return;
+      holesScored++;
+      const d=s-h.par;
+      if(d<=-1) birdies++;
+      else if(d===0) pars++;
+      else if(d===1) bogeys++;
+      else if(d===2) doubles++;
+      else if(d>2) worse++;
+
+      const holeShots=shots[h.number]||[];
+      totalShots+=holeShots.length;
+      holeShots.forEach(sh=>{
+        if(sh.dist>0){
+          totalDist+=sh.dist;
+          shotCount++;
+          if(sh.dist>longestShot) longestShot=sh.dist;
+        }
+      });
+    });
+
+    const avgDist=shotCount>0?Math.round(totalDist/shotCount):0;
+    return{birdies,pars,bogeys,doubles,worse,totalShots,longestShot,avgDist,holesScored};
+  };
+
+  // Determine winner
+  const winner = totals.every(t=>t>0) ? players[totals.indexOf(Math.min(...totals.filter(t=>t>0)))] : null;
 
   const handleEmailSummary = async () => {
     const email = auth.user?.email;
@@ -1726,18 +1765,25 @@ function ReviewScreen(){
 
   return(
     <div style={{minHeight:"100vh",background:"#050E1A",padding:16,display:"flex",flexDirection:"column",gap:14}}>
-      <div style={{textAlign:"center"}}>
+      {/* Header with trophy animation */}
+      <div style={{textAlign:"center",position:"relative",paddingTop:8}}>
         <div style={{color:GOLD,fontFamily:"'IBM Plex Mono',monospace",fontSize:11,letterSpacing:2,marginBottom:4}}>ROUND COMPLETE</div>
         <div style={{color:"#fff",fontFamily:"'Rajdhani',sans-serif",fontWeight:700,fontSize:28}}>{course.name}</div>
-        <div style={{color:"#9CA3AF",fontSize:12,fontFamily:"'IBM Plex Mono',monospace"}}>{state.round?.date}</div>
+        <div style={{color:"#9CA3AF",fontSize:12,fontFamily:"'IBM Plex Mono',monospace"}}>{state.round?.date} · Par {par}</div>
       </div>
 
+      {/* Player results cards */}
       <div style={{display:"grid",gridTemplateColumns:`repeat(${Math.min(players.length,2)},1fr)`,gap:10}}>
         {players.map((pk,i)=>{
           const t=totals[i],d=t-par,col=PLAYER_COLORS[pk];
+          const isWinner=winner===pk && players.length>1;
           return(
-            <div key={pk} style={{background:"rgba(255,255,255,0.04)",borderRadius:10,padding:"14px 16px",
-              border:`1px solid ${col}30`,textAlign:"center"}}>
+            <div key={pk} style={{background:isWinner?`linear-gradient(135deg,${GOLD}10,rgba(255,255,255,0.04))`:"rgba(255,255,255,0.04)",
+              borderRadius:10,padding:"14px 16px",
+              border:`1px solid ${isWinner?GOLD+"60":col+"30"}`,textAlign:"center",position:"relative"}}>
+              {isWinner && <div style={{position:"absolute",top:-6,left:"50%",transform:"translateX(-50%)",
+                background:GOLD,color:"#000",padding:"2px 8px",borderRadius:4,
+                fontFamily:"'IBM Plex Mono',monospace",fontSize:8,fontWeight:700,letterSpacing:1}}>WINNER</div>}
               <div style={{color:col,fontFamily:"'IBM Plex Mono',monospace",fontSize:11,fontWeight:700,marginBottom:6}}>
                 {nameOf(pk)}
               </div>
@@ -1750,7 +1796,80 @@ function ReviewScreen(){
         })}
       </div>
 
-      <ScorecardPanel/>
+      {/* Tab toggle */}
+      <div style={{display:"flex",background:"rgba(255,255,255,0.03)",borderRadius:8,overflow:"hidden",
+        border:"1px solid rgba(255,255,255,0.06)"}}>
+        <button onClick={()=>setReviewTab("scorecard")}
+          style={{flex:1,padding:"9px 8px",border:"none",cursor:"pointer",fontSize:11,
+            fontFamily:"'IBM Plex Mono',monospace",fontWeight:700,letterSpacing:0.5,
+            background:reviewTab==="scorecard"?NAVY:"transparent",
+            color:reviewTab==="scorecard"?"#fff":"#6B7280",
+            borderBottom:reviewTab==="scorecard"?`2px solid ${GOLD}`:"2px solid transparent"}}>
+          SCORECARD
+        </button>
+        <button onClick={()=>setReviewTab("stats")}
+          style={{flex:1,padding:"9px 8px",border:"none",cursor:"pointer",fontSize:11,
+            fontFamily:"'IBM Plex Mono',monospace",fontWeight:700,letterSpacing:0.5,
+            background:reviewTab==="stats"?NAVY:"transparent",
+            color:reviewTab==="stats"?"#fff":"#6B7280",
+            borderBottom:reviewTab==="stats"?`2px solid ${GOLD}`:"2px solid transparent"}}>
+          STATS
+        </button>
+      </div>
+
+      {reviewTab==="scorecard" && <ScorecardPanel/>}
+
+      {reviewTab==="stats" && (
+        <div style={{display:"flex",flexDirection:"column",gap:12}}>
+          {players.map(pk=>{
+            const stats=playerStats(pk);
+            const col=PLAYER_COLORS[pk];
+            const distItems = [
+              {label:"Birdies+",val:stats.birdies,color:"#4CAF50"},
+              {label:"Pars",val:stats.pars,color:"#93C5FD"},
+              {label:"Bogeys",val:stats.bogeys,color:"#FB923C"},
+              {label:"Doubles+",val:stats.doubles+stats.worse,color:"#F87171"},
+            ];
+            return(
+              <div key={pk} style={{background:"rgba(255,255,255,0.03)",borderRadius:10,padding:"14px 16px",
+                border:`1px solid ${col}20`}}>
+                <div style={{color:col,fontFamily:"'IBM Plex Mono',monospace",fontSize:11,fontWeight:700,marginBottom:10}}>{nameOf(pk)}</div>
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:12}}>
+                  <div style={{background:"rgba(0,0,0,0.2)",borderRadius:6,padding:"8px 8px",textAlign:"center"}}>
+                    <div style={{color:"#6B7280",fontFamily:"'IBM Plex Mono',monospace",fontSize:8}}>AVG DIST</div>
+                    <div style={{color:"#fff",fontSize:16,fontWeight:700,fontFamily:"'Rajdhani',sans-serif"}}>{stats.avgDist||"—"}y</div>
+                  </div>
+                  <div style={{background:"rgba(0,0,0,0.2)",borderRadius:6,padding:"8px 8px",textAlign:"center"}}>
+                    <div style={{color:"#6B7280",fontFamily:"'IBM Plex Mono',monospace",fontSize:8}}>LONGEST</div>
+                    <div style={{color:"#fff",fontSize:16,fontWeight:700,fontFamily:"'Rajdhani',sans-serif"}}>{stats.longestShot||"—"}y</div>
+                  </div>
+                  <div style={{background:"rgba(0,0,0,0.2)",borderRadius:6,padding:"8px 8px",textAlign:"center"}}>
+                    <div style={{color:"#6B7280",fontFamily:"'IBM Plex Mono',monospace",fontSize:8}}>SHOTS</div>
+                    <div style={{color:"#fff",fontSize:16,fontWeight:700,fontFamily:"'Rajdhani',sans-serif"}}>{stats.totalShots}</div>
+                  </div>
+                </div>
+                {/* Scoring distribution mini bar */}
+                {stats.holesScored>0 && (
+                  <div style={{display:"flex",gap:2,borderRadius:4,overflow:"hidden",height:8}}>
+                    {distItems.filter(d=>d.val>0).map(d=>(
+                      <div key={d.label} style={{flex:d.val,background:d.color,transition:"flex 0.3s ease"}}
+                        title={`${d.label}: ${d.val}`}/>
+                    ))}
+                  </div>
+                )}
+                <div style={{display:"flex",gap:12,marginTop:8}}>
+                  {distItems.map(d=>(
+                    <div key={d.label} style={{display:"flex",alignItems:"center",gap:4}}>
+                      <div style={{width:6,height:6,borderRadius:"50%",background:d.color}}/>
+                      <span style={{color:"#9CA3AF",fontFamily:"'IBM Plex Mono',monospace",fontSize:9}}>{d.label}: {d.val}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
 
       {/* Email summary */}
       <div style={{background:"rgba(255,255,255,0.03)",borderRadius:10,padding:"14px 16px",
@@ -1789,10 +1908,11 @@ function ReviewScreen(){
             background:"transparent",color:"#fff",fontSize:14,fontFamily:"'Rajdhani',sans-serif",fontWeight:600,cursor:"pointer"}}>
           New Round
         </button>
-        <button style={{flex:1,padding:"13px",borderRadius:8,border:"none",
-          background:`linear-gradient(135deg,${NAVY},#0F2444)`,
-          color:"#fff",fontSize:14,fontFamily:"'Rajdhani',sans-serif",fontWeight:600,cursor:"pointer"}}>
-          Export PDF
+        <button onClick={()=>dispatch({type:"SET_VIEW",v:"profile"})}
+          style={{flex:1,padding:"13px",borderRadius:8,border:"none",
+            background:`linear-gradient(135deg,${NAVY},#0F2444)`,
+            color:"#fff",fontSize:14,fontFamily:"'Rajdhani',sans-serif",fontWeight:600,cursor:"pointer"}}>
+          View Stats
         </button>
       </div>
     </div>
@@ -1985,70 +2105,140 @@ function ProfileScreen(){
   const auth=useAuth();
   const [rounds,setRounds]=useState<RoundRow[]>([]);
   const [loading,setLoading]=useState(true);
+  const [tab,setTab]=useState<"overview"|"handicap"|"courses">("overview");
 
   useEffect(()=>{
     fetchCompletedRounds().then(r=>{setRounds(r);setLoading(false);});
   },[]);
 
-  const now=new Date();
-  const todayStart=new Date(now.getFullYear(),now.getMonth(),now.getDate()).getTime();
-  const weekStart=todayStart - (now.getDay()*86400000);
-  const monthStart=new Date(now.getFullYear(),now.getMonth(),1).getTime();
+  // Extract round data for analysis
+  type RoundData = {total:number;par:number;diff:number;date:string;courseName:string;courseSlug:string;holes:{number:number;par:number;strokes:number;shots:ShotRecord[]}[]};
+  const roundsData: RoundData[] = rounds.map(r=>{
+    const st=r.state as Record<string,unknown>;
+    const scores=st.scores as Record<string,Record<string,{strokes:number;putts:number}>>|undefined;
+    const shots=st.shots as Record<string,Record<string,ShotRecord[]>>|undefined;
+    const course=st.course as Course|undefined;
+    if(!scores || !course) return null;
+    const par=course.holes.reduce((s,h)=>s+h.par,0);
+    const p1Scores=scores.p1;
+    if(!p1Scores) return null;
+    const total=Object.values(p1Scores).reduce((s,h)=>s+(h.strokes||0),0);
+    if(total===0) return null;
+    const holes=course.holes.map(h=>({
+      number:h.number,par:h.par,
+      strokes:p1Scores[String(h.number)]?.strokes||0,
+      shots:(shots?.p1?.[String(h.number)]||[]) as ShotRecord[],
+    }));
+    return{total,par,diff:total-par,date:r.ended_at||r.started_at,courseName:r.course_name,courseSlug:r.course_slug,holes};
+  }).filter((d): d is RoundData => d!==null);
 
-  const daily=rounds.filter(r=>r.ended_at && new Date(r.ended_at).getTime()>=todayStart);
-  const weekly=rounds.filter(r=>r.ended_at && new Date(r.ended_at).getTime()>=weekStart);
-  const monthly=rounds.filter(r=>r.ended_at && new Date(r.ended_at).getTime()>=monthStart);
-
-  const calcAvg=(list:RoundRow[])=>{
-    if(!list.length) return null;
-    let totalStrokes=0, totalPar=0, count=0;
-    list.forEach(r=>{
-      const st=r.state as Record<string,unknown>;
-      const scores=st.scores as Record<string,Record<string,{strokes:number}>>|undefined;
-      const course=st.course as Course|undefined;
-      if(!scores || !course) return;
-      const par=course.holes.reduce((s,h)=>s+h.par,0);
-      const p1Scores=scores.p1;
-      if(p1Scores){
-        const total=Object.values(p1Scores).reduce((s,h)=>s+(h.strokes||0),0);
-        if(total>0){ totalStrokes+=total; totalPar+=par; count++; }
-      }
+  // Handicap calculation (simplified USGA: best 8 of last 20 differentials, x 0.96)
+  const calcHandicap=()=>{
+    if(roundsData.length<5) return null;
+    const recent=roundsData.slice(0,20);
+    const diffs=recent.map(r=>{
+      const slopeRating=113; // default slope
+      const courseRating=r.par; // simplified: use par as course rating
+      return (r.total - courseRating) * (113 / slopeRating);
     });
-    if(!count) return null;
-    return { avg: Math.round(totalStrokes/count), diff: Math.round((totalStrokes-totalPar)/count*10)/10, count };
+    diffs.sort((a,b)=>a-b);
+    const count=recent.length;
+    const take=count<=6?1:count<=8?2:count<=10?3:count<=12?4:count<=14?5:count<=16?6:count<=18?7:8;
+    const best=diffs.slice(0,take);
+    const avg=best.reduce((s,d)=>s+d,0)/best.length;
+    return Math.round(avg*0.96*10)/10;
+  };
+  const handicap=calcHandicap();
+
+  // Scoring distribution
+  const scoringDist=()=>{
+    let eagles=0,birdies=0,pars=0,bogeys=0,doubles=0,worse=0;
+    roundsData.forEach(r=>r.holes.forEach(h=>{
+      if(h.strokes===0) return;
+      const d=h.strokes-h.par;
+      if(d<=-2) eagles++;
+      else if(d===-1) birdies++;
+      else if(d===0) pars++;
+      else if(d===1) bogeys++;
+      else if(d===2) doubles++;
+      else worse++;
+    }));
+    return{eagles,birdies,pars,bogeys,doubles,worse};
+  };
+  const dist=scoringDist();
+  const distTotal=dist.eagles+dist.birdies+dist.pars+dist.bogeys+dist.doubles+dist.worse;
+
+  // Par performance
+  const parPerformance=()=>{
+    const byPar:{[key:number]:{count:number;totalDiff:number;avgScore:number}} = {};
+    roundsData.forEach(r=>r.holes.forEach(h=>{
+      if(h.strokes===0) return;
+      if(!byPar[h.par]) byPar[h.par]={count:0,totalDiff:0,avgScore:0};
+      byPar[h.par].count++;
+      byPar[h.par].totalDiff+=h.strokes-h.par;
+      byPar[h.par].avgScore+=h.strokes;
+    }));
+    return Object.entries(byPar).map(([par,data])=>({
+      par:+par,count:data.count,
+      avgDiff:Math.round(data.totalDiff/data.count*10)/10,
+      avgScore:Math.round(data.avgScore/data.count*10)/10,
+    })).sort((a,b)=>a.par-b.par);
   };
 
-  const dailyStats=calcAvg(daily);
-  const weeklyStats=calcAvg(weekly);
-  const monthlyStats=calcAvg(monthly);
-  const allTimeStats=calcAvg(rounds);
+  // Streak & achievements
+  const achievements=()=>{
+    const results:string[]=[];
+    if(roundsData.length>=1) results.push("First Round");
+    if(roundsData.length>=5) results.push("5 Rounds");
+    if(roundsData.length>=10) results.push("10 Rounds");
+    if(roundsData.length>=25) results.push("25 Rounds");
+    if(dist.eagles>0) results.push("First Eagle");
+    if(dist.birdies>=10) results.push("10 Birdies");
+    if(dist.birdies>=50) results.push("50 Birdies");
+    const subPar=roundsData.filter(r=>r.diff<0);
+    if(subPar.length>0) results.push("Under Par");
+    if(subPar.length>=5) results.push("5x Under Par");
+    const lowRound=roundsData.reduce((best,r)=>r.diff<best?r.diff:best, Infinity);
+    if(lowRound<=0) results.push(`Low: ${lowRound>=0?"Even":`${lowRound}`}`);
+    return results;
+  };
 
+  // Course breakdown
   const courseBreakdown=()=>{
-    const map:Record<string,{name:string;rounds:number;bestScore:number;bestDiff:number;avgScore:number}> = {};
-    rounds.forEach(r=>{
-      const st=r.state as Record<string,unknown>;
-      const scores=st.scores as Record<string,Record<string,{strokes:number}>>|undefined;
-      const course=st.course as Course|undefined;
-      if(!scores || !course) return;
-      const par=course.holes.reduce((s,h)=>s+h.par,0);
-      const p1Scores=scores.p1;
-      if(!p1Scores) return;
-      const total=Object.values(p1Scores).reduce((s,h)=>s+(h.strokes||0),0);
-      if(total===0) return;
-      if(!map[r.course_slug]) map[r.course_slug]={name:r.course_name,rounds:0,bestScore:Infinity,bestDiff:Infinity,avgScore:0};
-      const entry=map[r.course_slug];
+    const map:Record<string,{name:string;rounds:number;bestScore:number;bestDiff:number;avgScore:number;avgDiff:number}> = {};
+    roundsData.forEach(r=>{
+      if(!map[r.courseSlug]) map[r.courseSlug]={name:r.courseName,rounds:0,bestScore:Infinity,bestDiff:Infinity,avgScore:0,avgDiff:0};
+      const entry=map[r.courseSlug];
       entry.rounds++;
-      entry.avgScore+=total;
-      if(total<entry.bestScore){ entry.bestScore=total; entry.bestDiff=total-par; }
+      entry.avgScore+=r.total;
+      entry.avgDiff+=r.diff;
+      if(r.total<entry.bestScore){ entry.bestScore=r.total; entry.bestDiff=r.diff; }
     });
-    return Object.values(map).map(e=>({...e,avgScore:Math.round(e.avgScore/e.rounds)}));
+    return Object.values(map).map(e=>({...e,avgScore:Math.round(e.avgScore/e.rounds),avgDiff:Math.round(e.avgDiff/e.rounds*10)/10}));
   };
-  const courses=courseBreakdown();
+
+  const now=new Date();
+  const weekStart=new Date(now.getFullYear(),now.getMonth(),now.getDate()).getTime() - (now.getDay()*86400000);
+  const monthStart=new Date(now.getFullYear(),now.getMonth(),1).getTime();
+  const weeklyRounds=roundsData.filter(r=>new Date(r.date).getTime()>=weekStart);
+  const monthlyRounds=roundsData.filter(r=>new Date(r.date).getTime()>=monthStart);
+
+  const avgOf=(list:RoundData[])=>list.length?Math.round(list.reduce((s,r)=>s+r.total,0)/list.length):null;
+  const diffOf=(list:RoundData[])=>list.length?Math.round(list.reduce((s,r)=>s+r.diff,0)/list.length*10)/10:null;
+
+  const tabBtn = (id:"overview"|"handicap"|"courses",label:string) => (
+    <button onClick={()=>setTab(id)}
+      style={{flex:1,padding:"9px 8px",border:"none",cursor:"pointer",fontSize:11,
+        fontFamily:"'IBM Plex Mono',monospace",fontWeight:700,letterSpacing:0.5,
+        background:tab===id?NAVY:"transparent",color:tab===id?"#fff":"#6B7280",
+        borderBottom:tab===id?`2px solid ${GOLD}`:"2px solid transparent",transition:"all 0.15s"}}>
+      {label}
+    </button>
+  );
 
   return(
     <div style={{minHeight:"100vh",background:"radial-gradient(ellipse at 30% 20%, #0F2444 0%, #050E1A 60%)",
       padding:16,display:"flex",flexDirection:"column",gap:14}}>
-      {/* Header */}
       <div style={{display:"flex",alignItems:"center",gap:10}}>
         <button onClick={()=>dispatch({type:"SET_VIEW",v:"home"})}
           style={{padding:"8px 12px",borderRadius:6,border:"none",background:"rgba(255,255,255,0.08)",
@@ -2066,97 +2256,267 @@ function ProfileScreen(){
         <div style={{textAlign:"center",padding:40,color:"#9CA3AF",fontFamily:"'IBM Plex Mono',monospace",fontSize:12}}>Loading stats...</div>
       ):(
         <>
-          {/* Period stats */}
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
-            {[
-              {label:"Today",stats:dailyStats},
-              {label:"This Week",stats:weeklyStats},
-              {label:"This Month",stats:monthlyStats},
-              {label:"All Time",stats:allTimeStats},
-            ].map(({label,stats})=>(
-              <div key={label} style={{background:"rgba(255,255,255,0.04)",borderRadius:10,padding:"14px 14px",
-                border:"1px solid rgba(255,255,255,0.06)"}}>
-                <div style={{color:"#9CA3AF",fontFamily:"'IBM Plex Mono',monospace",fontSize:9,fontWeight:700,letterSpacing:1,marginBottom:6}}>{label.toUpperCase()}</div>
-                {stats ? (
-                  <>
-                    <div style={{color:"#fff",fontSize:28,fontWeight:700,fontFamily:"'Rajdhani',sans-serif"}}>{stats.avg}</div>
-                    <div style={{display:"flex",gap:8,alignItems:"center",marginTop:2}}>
-                      <span style={{color:stats.diff<0?"#4CAF50":stats.diff>0?"#F87171":"#93C5FD",
-                        fontFamily:"'IBM Plex Mono',monospace",fontSize:11,fontWeight:700}}>
-                        {stats.diff===0?"Even":`${stats.diff>0?"+":""}${stats.diff}`}
-                      </span>
-                      <span style={{color:"#6B7280",fontFamily:"'IBM Plex Mono',monospace",fontSize:10}}>
-                        {stats.count} rd{stats.count!==1?"s":""}
-                      </span>
-                    </div>
-                  </>
-                ):(
-                  <div style={{color:"#4B5563",fontSize:12,fontFamily:"'IBM Plex Mono',monospace"}}>No rounds</div>
+          {/* Handicap hero card */}
+          <div style={{background:`linear-gradient(135deg,${NAVY} 0%,#0F2444 100%)`,borderRadius:14,padding:"20px 20px",
+            border:`1px solid ${GOLD}30`,position:"relative",overflow:"hidden"}}>
+            <div style={{position:"absolute",top:-20,right:-20,width:100,height:100,borderRadius:"50%",
+              background:`radial-gradient(circle,${GOLD}08,transparent 70%)`}}/>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
+              <div>
+                <div style={{color:GOLD,fontFamily:"'IBM Plex Mono',monospace",fontSize:9,letterSpacing:2,marginBottom:6}}>HANDICAP INDEX</div>
+                <div style={{color:"#fff",fontSize:48,fontWeight:700,fontFamily:"'Rajdhani',sans-serif",lineHeight:1}}>
+                  {handicap!==null?handicap.toFixed(1):"—"}
+                </div>
+                {handicap===null && (
+                  <div style={{color:"#6B7280",fontSize:10,fontFamily:"'IBM Plex Mono',monospace",marginTop:4}}>
+                    Need {Math.max(0,5-roundsData.length)} more round{5-roundsData.length!==1?"s":""} to calculate
+                  </div>
                 )}
               </div>
-            ))}
+              <div style={{textAlign:"right"}}>
+                <div style={{color:"#9CA3AF",fontFamily:"'IBM Plex Mono',monospace",fontSize:9,marginBottom:4}}>ROUNDS</div>
+                <div style={{color:"#fff",fontSize:24,fontWeight:700,fontFamily:"'Rajdhani',sans-serif"}}>{roundsData.length}</div>
+              </div>
+            </div>
+            {roundsData.length>0 && (
+              <div style={{display:"flex",gap:16,marginTop:14,paddingTop:14,borderTop:`1px solid ${GOLD}15`}}>
+                <div>
+                  <div style={{color:"#6B7280",fontFamily:"'IBM Plex Mono',monospace",fontSize:9}}>AVG SCORE</div>
+                  <div style={{color:"#fff",fontSize:16,fontWeight:700,fontFamily:"'IBM Plex Mono',monospace"}}>{avgOf(roundsData)}</div>
+                </div>
+                <div>
+                  <div style={{color:"#6B7280",fontFamily:"'IBM Plex Mono',monospace",fontSize:9}}>AVG VS PAR</div>
+                  <div style={{color:diffOf(roundsData)!==null&&diffOf(roundsData)!<0?"#4CAF50":"#F87171",
+                    fontSize:16,fontWeight:700,fontFamily:"'IBM Plex Mono',monospace"}}>
+                    {diffOf(roundsData)!==null?`${diffOf(roundsData)!>0?"+":""}${diffOf(roundsData)}`:"—"}
+                  </div>
+                </div>
+                <div>
+                  <div style={{color:"#6B7280",fontFamily:"'IBM Plex Mono',monospace",fontSize:9}}>BEST</div>
+                  <div style={{color:"#4CAF50",fontSize:16,fontWeight:700,fontFamily:"'IBM Plex Mono',monospace"}}>
+                    {Math.min(...roundsData.map(r=>r.total))}
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
 
-          {/* Course breakdown */}
-          {courses.length > 0 && (
-            <div>
-              <div style={{color:"#9CA3AF",fontFamily:"'IBM Plex Mono',monospace",fontSize:10,fontWeight:700,letterSpacing:1,marginBottom:8}}>BY COURSE</div>
-              <div style={{display:"flex",flexDirection:"column",gap:6}}>
-                {courses.sort((a,b)=>b.rounds-a.rounds).map(c=>(
-                  <div key={c.name} style={{background:"rgba(255,255,255,0.03)",borderRadius:8,padding:"12px 14px",
-                    border:"1px solid rgba(255,255,255,0.06)",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-                    <div>
-                      <div style={{color:"#fff",fontFamily:"'Rajdhani',sans-serif",fontWeight:600,fontSize:15}}>{c.name}</div>
-                      <div style={{color:"#6B7280",fontFamily:"'IBM Plex Mono',monospace",fontSize:10,marginTop:2}}>
-                        {c.rounds} round{c.rounds!==1?"s":""} played
-                      </div>
-                    </div>
-                    <div style={{textAlign:"right"}}>
-                      <div style={{color:"#fff",fontFamily:"'Rajdhani',sans-serif",fontWeight:700,fontSize:18}}>{c.avgScore}</div>
-                      <div style={{color:c.bestDiff<0?"#4CAF50":c.bestDiff>0?"#F87171":"#93C5FD",
-                        fontFamily:"'IBM Plex Mono',monospace",fontSize:10}}>
-                        Best: {c.bestScore} ({c.bestDiff===0?"E":`${c.bestDiff>0?"+":""}${c.bestDiff}`})
-                      </div>
-                    </div>
+          {/* Tab navigation */}
+          <div style={{display:"flex",background:"rgba(255,255,255,0.03)",borderRadius:8,overflow:"hidden",
+            border:"1px solid rgba(255,255,255,0.06)"}}>
+            {tabBtn("overview","OVERVIEW")}
+            {tabBtn("handicap","HANDICAP")}
+            {tabBtn("courses","COURSES")}
+          </div>
+
+          {tab==="overview" && (
+            <>
+              {/* Period stats */}
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8}}>
+                {[
+                  {label:"This Week",count:weeklyRounds.length,avg:avgOf(weeklyRounds)},
+                  {label:"This Month",count:monthlyRounds.length,avg:avgOf(monthlyRounds)},
+                  {label:"All Time",count:roundsData.length,avg:avgOf(roundsData)},
+                ].map(({label,count,avg})=>(
+                  <div key={label} style={{background:"rgba(255,255,255,0.04)",borderRadius:10,padding:"12px 10px",
+                    border:"1px solid rgba(255,255,255,0.06)",textAlign:"center"}}>
+                    <div style={{color:"#9CA3AF",fontFamily:"'IBM Plex Mono',monospace",fontSize:8,fontWeight:700,letterSpacing:1,marginBottom:4}}>{label.toUpperCase()}</div>
+                    <div style={{color:"#fff",fontSize:20,fontWeight:700,fontFamily:"'Rajdhani',sans-serif"}}>{avg||"—"}</div>
+                    <div style={{color:"#6B7280",fontFamily:"'IBM Plex Mono',monospace",fontSize:9}}>{count} rd{count!==1?"s":""}</div>
                   </div>
                 ))}
               </div>
-            </div>
+
+              {/* Scoring distribution */}
+              {distTotal>0 && (
+                <div style={{background:"rgba(255,255,255,0.03)",borderRadius:10,padding:"14px 16px",
+                  border:"1px solid rgba(255,255,255,0.06)"}}>
+                  <div style={{color:"#9CA3AF",fontFamily:"'IBM Plex Mono',monospace",fontSize:9,fontWeight:700,letterSpacing:1,marginBottom:10}}>SCORING DISTRIBUTION</div>
+                  <div style={{display:"flex",flexDirection:"column",gap:6}}>
+                    {([
+                      {label:"Eagles",count:dist.eagles,color:"#FFD700"},
+                      {label:"Birdies",count:dist.birdies,color:"#4CAF50"},
+                      {label:"Pars",count:dist.pars,color:"#93C5FD"},
+                      {label:"Bogeys",count:dist.bogeys,color:"#FB923C"},
+                      {label:"Doubles",count:dist.doubles,color:"#F87171"},
+                      {label:"Worse",count:dist.worse,color:"#EF4444"},
+                    ] as const).filter(r=>r.count>0).map(row=>(
+                      <div key={row.label} style={{display:"flex",alignItems:"center",gap:10}}>
+                        <div style={{width:56,color:row.color,fontFamily:"'IBM Plex Mono',monospace",fontSize:10,fontWeight:700}}>{row.label}</div>
+                        <div style={{flex:1,height:8,background:"rgba(255,255,255,0.06)",borderRadius:4,overflow:"hidden"}}>
+                          <div style={{height:"100%",width:`${(row.count/distTotal)*100}%`,background:row.color,borderRadius:4,
+                            transition:"width 0.3s ease"}}/>
+                        </div>
+                        <div style={{width:30,textAlign:"right",color:"#D1D5DB",fontFamily:"'IBM Plex Mono',monospace",fontSize:10}}>{row.count}</div>
+                        <div style={{width:32,textAlign:"right",color:"#6B7280",fontFamily:"'IBM Plex Mono',monospace",fontSize:9}}>
+                          {Math.round(row.count/distTotal*100)}%
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Par performance */}
+              {parPerformance().length>0 && (
+                <div style={{background:"rgba(255,255,255,0.03)",borderRadius:10,padding:"14px 16px",
+                  border:"1px solid rgba(255,255,255,0.06)"}}>
+                  <div style={{color:"#9CA3AF",fontFamily:"'IBM Plex Mono',monospace",fontSize:9,fontWeight:700,letterSpacing:1,marginBottom:10}}>PERFORMANCE BY PAR</div>
+                  <div style={{display:"grid",gridTemplateColumns:`repeat(${parPerformance().length},1fr)`,gap:8}}>
+                    {parPerformance().map(pp=>(
+                      <div key={pp.par} style={{textAlign:"center",background:"rgba(0,0,0,0.2)",borderRadius:8,padding:"10px 8px"}}>
+                        <div style={{color:GOLD,fontFamily:"'IBM Plex Mono',monospace",fontSize:10,fontWeight:700,marginBottom:6}}>PAR {pp.par}</div>
+                        <div style={{color:"#fff",fontSize:20,fontWeight:700,fontFamily:"'Rajdhani',sans-serif"}}>{pp.avgScore}</div>
+                        <div style={{color:pp.avgDiff<0?"#4CAF50":pp.avgDiff>0?"#F87171":"#93C5FD",
+                          fontFamily:"'IBM Plex Mono',monospace",fontSize:10,marginTop:2}}>
+                          {pp.avgDiff===0?"Even":`${pp.avgDiff>0?"+":""}${pp.avgDiff}`}
+                        </div>
+                        <div style={{color:"#6B7280",fontFamily:"'IBM Plex Mono',monospace",fontSize:8,marginTop:2}}>{pp.count} holes</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Achievements */}
+              {achievements().length>0 && (
+                <div style={{background:"rgba(255,255,255,0.03)",borderRadius:10,padding:"14px 16px",
+                  border:"1px solid rgba(255,255,255,0.06)"}}>
+                  <div style={{color:"#9CA3AF",fontFamily:"'IBM Plex Mono',monospace",fontSize:9,fontWeight:700,letterSpacing:1,marginBottom:10}}>ACHIEVEMENTS</div>
+                  <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
+                    {achievements().map(a=>(
+                      <div key={a} style={{padding:"6px 10px",borderRadius:6,background:`${GOLD}12`,border:`1px solid ${GOLD}40`,
+                        color:GOLD,fontFamily:"'IBM Plex Mono',monospace",fontSize:10,fontWeight:600}}>{a}</div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </>
           )}
 
-          {/* Recent trend */}
-          {rounds.length >= 3 && (
-            <div>
-              <div style={{color:"#9CA3AF",fontFamily:"'IBM Plex Mono',monospace",fontSize:10,fontWeight:700,letterSpacing:1,marginBottom:8}}>RECENT TREND</div>
-              <div style={{background:"rgba(255,255,255,0.03)",borderRadius:8,padding:"14px 14px",
+          {tab==="handicap" && (
+            <>
+              {/* Handicap explanation */}
+              <div style={{background:"rgba(255,255,255,0.03)",borderRadius:10,padding:"14px 16px",
                 border:"1px solid rgba(255,255,255,0.06)"}}>
-                <div style={{display:"flex",alignItems:"flex-end",gap:4,height:60}}>
-                  {rounds.slice(0,10).reverse().map((r,i)=>{
-                    const st=r.state as Record<string,unknown>;
-                    const scores=st.scores as Record<string,Record<string,{strokes:number}>>|undefined;
-                    const course=st.course as Course|undefined;
-                    if(!scores || !course) return <div key={i} style={{flex:1,height:4,background:"#1F2937",borderRadius:2}}/>;
-                    const par=course.holes.reduce((s,h)=>s+h.par,0);
-                    const total=scores.p1?Object.values(scores.p1).reduce((s,h)=>s+(h.strokes||0),0):0;
-                    if(total===0) return <div key={i} style={{flex:1,height:4,background:"#1F2937",borderRadius:2}}/>;
-                    const diff=total-par;
-                    const barH=Math.max(8,Math.min(56,30+diff*4));
-                    const col=diff<0?"#4CAF50":diff>0?"#F87171":"#93C5FD";
-                    return(
-                      <div key={i} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:2}}>
-                        <div style={{fontSize:8,color:"#6B7280",fontFamily:"'IBM Plex Mono',monospace"}}>
-                          {diff===0?"E":`${diff>0?"+":""}${diff}`}
-                        </div>
-                        <div style={{width:"100%",height:barH,background:col,borderRadius:3,opacity:0.8}}/>
-                      </div>
-                    );
-                  })}
-                </div>
-                <div style={{color:"#6B7280",fontSize:9,fontFamily:"'IBM Plex Mono',monospace",marginTop:6,textAlign:"center"}}>
-                  Last {Math.min(rounds.length,10)} rounds
+                <div style={{color:"#9CA3AF",fontFamily:"'IBM Plex Mono',monospace",fontSize:9,fontWeight:700,letterSpacing:1,marginBottom:8}}>HOW IT WORKS</div>
+                <div style={{color:"#D1D5DB",fontSize:12,lineHeight:1.6}}>
+                  Your handicap is calculated from the best differentials of your last 20 rounds, multiplied by 0.96.
+                  Lower is better. A scratch golfer has a handicap of 0.
                 </div>
               </div>
-            </div>
+
+              {/* Round differentials */}
+              <div style={{background:"rgba(255,255,255,0.03)",borderRadius:10,padding:"14px 16px",
+                border:"1px solid rgba(255,255,255,0.06)"}}>
+                <div style={{color:"#9CA3AF",fontFamily:"'IBM Plex Mono',monospace",fontSize:9,fontWeight:700,letterSpacing:1,marginBottom:10}}>RECENT DIFFERENTIALS</div>
+                {roundsData.length===0 ? (
+                  <div style={{color:"#4B5563",fontSize:11,fontFamily:"'IBM Plex Mono',monospace"}}>No rounds yet</div>
+                ):(
+                  <div style={{display:"flex",flexDirection:"column",gap:4}}>
+                    {roundsData.slice(0,20).map((r,i)=>{
+                      const differential=Math.round(r.diff*10)/10;
+                      return(
+                        <div key={i} style={{display:"flex",alignItems:"center",gap:8,padding:"6px 8px",
+                          borderRadius:6,background:i<8&&roundsData.length>=8?"rgba(200,150,12,0.06)":"transparent"}}>
+                          <div style={{width:20,color:"#6B7280",fontFamily:"'IBM Plex Mono',monospace",fontSize:9,textAlign:"center"}}>{i+1}</div>
+                          <div style={{flex:1,color:"#D1D5DB",fontSize:11,fontFamily:"'IBM Plex Mono',monospace"}}>{r.courseName}</div>
+                          <div style={{color:"#9CA3AF",fontSize:9,fontFamily:"'IBM Plex Mono',monospace"}}>
+                            {new Date(r.date).toLocaleDateString(undefined,{month:"short",day:"numeric"})}
+                          </div>
+                          <div style={{width:40,textAlign:"right",color:"#fff",fontSize:12,fontWeight:700,fontFamily:"'IBM Plex Mono',monospace"}}>{r.total}</div>
+                          <div style={{width:36,textAlign:"right",
+                            color:differential<0?"#4CAF50":differential>0?"#F87171":"#93C5FD",
+                            fontSize:11,fontWeight:700,fontFamily:"'IBM Plex Mono',monospace"}}>
+                            {differential>=0?"+":""}{differential}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+                {roundsData.length>=8 && (
+                  <div style={{marginTop:8,color:"#6B7280",fontSize:9,fontFamily:"'IBM Plex Mono',monospace"}}>
+                    Highlighted rows are used in handicap calculation (best 8 of 20)
+                  </div>
+                )}
+              </div>
+
+              {/* Trend chart */}
+              {roundsData.length>=3 && (
+                <div style={{background:"rgba(255,255,255,0.03)",borderRadius:10,padding:"14px 16px",
+                  border:"1px solid rgba(255,255,255,0.06)"}}>
+                  <div style={{color:"#9CA3AF",fontFamily:"'IBM Plex Mono',monospace",fontSize:9,fontWeight:700,letterSpacing:1,marginBottom:10}}>SCORE TREND</div>
+                  <div style={{display:"flex",alignItems:"flex-end",gap:4,height:70}}>
+                    {roundsData.slice(0,12).reverse().map((r,i)=>{
+                      const barH=Math.max(8,Math.min(62,35+r.diff*4));
+                      const col=r.diff<0?"#4CAF50":r.diff>0?"#F87171":"#93C5FD";
+                      return(
+                        <div key={i} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:2}}>
+                          <div style={{fontSize:8,color:"#6B7280",fontFamily:"'IBM Plex Mono',monospace"}}>
+                            {r.diff===0?"E":`${r.diff>0?"+":""}${r.diff}`}
+                          </div>
+                          <div style={{width:"100%",height:barH,background:col,borderRadius:3,opacity:0.8,
+                            transition:"height 0.3s ease"}}/>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <div style={{color:"#6B7280",fontSize:9,fontFamily:"'IBM Plex Mono',monospace",marginTop:6,textAlign:"center"}}>
+                    Last {Math.min(roundsData.length,12)} rounds (oldest → newest)
+                  </div>
+                </div>
+              )}
+            </>
+          )}
+
+          {tab==="courses" && (
+            <>
+              {courseBreakdown().length===0 ? (
+                <div style={{textAlign:"center",padding:40,color:"#6B7280",fontFamily:"'IBM Plex Mono',monospace",fontSize:12}}>
+                  No course data yet
+                </div>
+              ):(
+                <div style={{display:"flex",flexDirection:"column",gap:8}}>
+                  {courseBreakdown().sort((a,b)=>b.rounds-a.rounds).map(c=>(
+                    <div key={c.name} style={{background:"rgba(255,255,255,0.03)",borderRadius:10,padding:"14px 16px",
+                      border:"1px solid rgba(255,255,255,0.06)"}}>
+                      <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:10}}>
+                        <div>
+                          <div style={{color:"#fff",fontFamily:"'Rajdhani',sans-serif",fontWeight:600,fontSize:16}}>{c.name}</div>
+                          <div style={{color:"#6B7280",fontFamily:"'IBM Plex Mono',monospace",fontSize:10,marginTop:2}}>
+                            {c.rounds} round{c.rounds!==1?"s":""} played
+                          </div>
+                        </div>
+                        <div style={{textAlign:"right"}}>
+                          <div style={{color:c.avgDiff<0?"#4CAF50":c.avgDiff>0?"#F87171":"#93C5FD",
+                            fontSize:11,fontWeight:700,fontFamily:"'IBM Plex Mono',monospace"}}>
+                            Avg: {c.avgDiff===0?"E":`${c.avgDiff>0?"+":""}${c.avgDiff}`}
+                          </div>
+                        </div>
+                      </div>
+                      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8}}>
+                        <div style={{background:"rgba(0,0,0,0.2)",borderRadius:6,padding:"8px 10px",textAlign:"center"}}>
+                          <div style={{color:"#6B7280",fontFamily:"'IBM Plex Mono',monospace",fontSize:8}}>AVG</div>
+                          <div style={{color:"#fff",fontSize:16,fontWeight:700,fontFamily:"'Rajdhani',sans-serif"}}>{c.avgScore}</div>
+                        </div>
+                        <div style={{background:"rgba(0,0,0,0.2)",borderRadius:6,padding:"8px 10px",textAlign:"center"}}>
+                          <div style={{color:"#6B7280",fontFamily:"'IBM Plex Mono',monospace",fontSize:8}}>BEST</div>
+                          <div style={{color:"#4CAF50",fontSize:16,fontWeight:700,fontFamily:"'Rajdhani',sans-serif"}}>{c.bestScore}</div>
+                        </div>
+                        <div style={{background:"rgba(0,0,0,0.2)",borderRadius:6,padding:"8px 10px",textAlign:"center"}}>
+                          <div style={{color:"#6B7280",fontFamily:"'IBM Plex Mono',monospace",fontSize:8}}>BEST VS PAR</div>
+                          <div style={{color:c.bestDiff<0?"#4CAF50":c.bestDiff>0?"#F87171":"#93C5FD",
+                            fontSize:16,fontWeight:700,fontFamily:"'Rajdhani',sans-serif"}}>
+                            {c.bestDiff===0?"E":`${c.bestDiff>0?"+":""}${c.bestDiff}`}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </>
           )}
         </>
       )}
