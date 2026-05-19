@@ -5,11 +5,14 @@ const NAVY = "#0F2444";
 const GOLD = "#C8960C";
 const GREEN = "#2E7D32";
 
+const INVITE_CODE = import.meta.env.VITE_INVITE_CODE || "vetfield2026";
+
 export function AuthScreen() {
   const { signIn, signUp } = useAuth();
   const [mode, setMode] = useState<"login" | "signup">("login");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [inviteCode, setInviteCode] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [success, setSuccess] = useState<string | null>(null);
@@ -20,6 +23,9 @@ export function AuthScreen() {
     setSuccess(null);
     if (!email || !password) { setError("Please fill in all fields"); return; }
     if (password.length < 6) { setError("Password must be at least 6 characters"); return; }
+    if (mode === "signup" && inviteCode !== INVITE_CODE) {
+      setError("Invalid invite code"); return;
+    }
     setLoading(true);
 
     if (mode === "login") {
@@ -117,6 +123,23 @@ export function AuthScreen() {
               }}
             />
           </div>
+
+          {mode === "signup" && (
+            <div>
+              <label style={{ display: "block", fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, color: GOLD, marginBottom: 5, letterSpacing: 1 }}>INVITE CODE</label>
+              <input
+                type="text" value={inviteCode} onChange={e => setInviteCode(e.target.value)}
+                placeholder="Enter invite code"
+                autoComplete="off"
+                style={{
+                  width: "100%", padding: "11px 14px", borderRadius: 8,
+                  border: `1px solid ${GOLD}40`, background: "rgba(200,150,12,0.05)",
+                  color: "#fff", fontSize: 14, fontFamily: "'IBM Plex Mono', monospace",
+                  outline: "none", boxSizing: "border-box",
+                }}
+              />
+            </div>
+          )}
 
           {error && (
             <div style={{
