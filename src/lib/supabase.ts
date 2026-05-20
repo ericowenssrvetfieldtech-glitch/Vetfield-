@@ -218,9 +218,10 @@ export async function startGlassesSession(args: {
   model: string;
 }): Promise<GlassesSession | null> {
   const device_id = getDeviceId();
+  const user_id = await getCurrentUserId();
   const { data, error } = await supabase
     .from("glasses_sessions")
-    .insert({ device_id, round_id: args.round_id, model: args.model, status: "streaming" })
+    .insert({ device_id, user_id, round_id: args.round_id, model: args.model, status: "streaming" })
     .select()
     .maybeSingle();
   if (error) {
@@ -257,9 +258,10 @@ export async function recordAiQuery(args: {
   intent: string;
 }): Promise<AiQueryRow | null> {
   const device_id = getDeviceId();
+  const user_id = await getCurrentUserId();
   const { data, error } = await supabase
     .from("ai_queries")
-    .insert({ ...args, device_id })
+    .insert({ ...args, device_id, user_id })
     .select()
     .maybeSingle();
   if (error) {
@@ -271,7 +273,10 @@ export async function recordAiQuery(args: {
 
 export async function fetchRecentAiQueries(roundId: string | null, limit = 20): Promise<AiQueryRow[]> {
   const device_id = getDeviceId();
-  let q = supabase.from("ai_queries").select("*").eq("device_id", device_id);
+  const user_id = await getCurrentUserId();
+  let q = supabase.from("ai_queries").select("*");
+  if (user_id) q = q.eq("user_id", user_id);
+  else q = q.eq("device_id", device_id);
   if (roundId) q = q.eq("round_id", roundId);
   const { data, error } = await q.order("created_at", { ascending: false }).limit(limit);
   if (error) {
