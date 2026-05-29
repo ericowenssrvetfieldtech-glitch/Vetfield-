@@ -1743,40 +1743,33 @@ function ReviewScreen(){
     const scores = state.scores[pk];
     const shots = state.shots[pk];
     let birdies=0, pars=0, bogeys=0, doubles=0, worse=0;
-    let totalStrokes=0, totalPutts=0, puttsRecorded=0;
+    let totalShots=0, longestShot=0, totalDist=0, shotCount=0;
     let holesScored=0;
-    let bestHole=0, worstHole=0, bestDiff=99, worstDiff=-99;
 
     course.holes.forEach(h=>{
-      const rec=scores[h.number];
-      const s=rec?.strokes;
+      const s=scores[h.number]?.strokes;
       if(!s) return;
       holesScored++;
-      totalStrokes+=s;
-      if(rec.putts && rec.putts>0){ totalPutts+=rec.putts; puttsRecorded++; }
       const d=s-h.par;
       if(d<=-1) birdies++;
       else if(d===0) pars++;
       else if(d===1) bogeys++;
       else if(d===2) doubles++;
       else if(d>2) worse++;
-      if(d<bestDiff){ bestDiff=d; bestHole=h.number; }
-      if(d>worstDiff){ worstDiff=d; worstHole=h.number; }
-    });
 
-    let longestShot=0, totalDist=0, shotCount=0;
-    course.holes.forEach(h=>{
       const holeShots=shots[h.number]||[];
+      totalShots+=holeShots.length;
       holeShots.forEach(sh=>{
-        if(sh.dist>0){ totalDist+=sh.dist; shotCount++; if(sh.dist>longestShot) longestShot=sh.dist; }
+        if(sh.dist>0){
+          totalDist+=sh.dist;
+          shotCount++;
+          if(sh.dist>longestShot) longestShot=sh.dist;
+        }
       });
     });
 
     const avgDist=shotCount>0?Math.round(totalDist/shotCount):0;
-    const scoringAvg=holesScored>0?(totalStrokes/holesScored).toFixed(1):"0";
-    const avgPutts=puttsRecorded>0?(totalPutts/puttsRecorded).toFixed(1):"0";
-    return{birdies,pars,bogeys,doubles,worse,totalStrokes,longestShot,avgDist,holesScored,
-      scoringAvg,avgPutts,puttsRecorded,bestHole,worstHole,bestDiff,worstDiff};
+    return{birdies,pars,bogeys,doubles,worse,totalShots,longestShot,avgDist,holesScored};
   };
 
   // Determine winner
@@ -1807,15 +1800,10 @@ function ReviewScreen(){
           scores: state.scores,
         }),
       });
-      const body = await res.json().catch(()=>({success:false,error:"Unknown error"}));
-      if(res.ok && body.success){
-        if(body.emailSent){
-          setEmailStatus("sent");
-        } else {
-          setEmailStatus("sent");
-          setEmailError(body.saved ? "Round saved! Email delivery pending." : null);
-        }
+      if(res.ok){
+        setEmailStatus("sent");
       } else {
+        const body = await res.json().catch(()=>({error:"Unknown error"}));
         setEmailError(body.error || "Failed to send");
         setEmailStatus("error");
       }
@@ -1898,46 +1886,19 @@ function ReviewScreen(){
                 <div style={{color:col,fontFamily:"'IBM Plex Mono',monospace",fontSize:11,fontWeight:700,marginBottom:10}}>{nameOf(pk)}</div>
                 <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:12}}>
                   <div style={{background:"rgba(0,0,0,0.2)",borderRadius:6,padding:"8px 8px",textAlign:"center"}}>
-                    <div style={{color:"#6B7280",fontFamily:"'IBM Plex Mono',monospace",fontSize:8}}>SCORING AVG</div>
-                    <div style={{color:"#fff",fontSize:16,fontWeight:700,fontFamily:"'Rajdhani',sans-serif"}}>{stats.holesScored>0?stats.scoringAvg:"—"}</div>
+                    <div style={{color:"#6B7280",fontFamily:"'IBM Plex Mono',monospace",fontSize:8}}>AVG DIST</div>
+                    <div style={{color:"#fff",fontSize:16,fontWeight:700,fontFamily:"'Rajdhani',sans-serif"}}>{stats.avgDist||"—"}y</div>
                   </div>
                   <div style={{background:"rgba(0,0,0,0.2)",borderRadius:6,padding:"8px 8px",textAlign:"center"}}>
-                    <div style={{color:"#6B7280",fontFamily:"'IBM Plex Mono',monospace",fontSize:8}}>HOLES</div>
-                    <div style={{color:"#fff",fontSize:16,fontWeight:700,fontFamily:"'Rajdhani',sans-serif"}}>{stats.holesScored}/{course.holes.length}</div>
+                    <div style={{color:"#6B7280",fontFamily:"'IBM Plex Mono',monospace",fontSize:8}}>LONGEST</div>
+                    <div style={{color:"#fff",fontSize:16,fontWeight:700,fontFamily:"'Rajdhani',sans-serif"}}>{stats.longestShot||"—"}y</div>
                   </div>
                   <div style={{background:"rgba(0,0,0,0.2)",borderRadius:6,padding:"8px 8px",textAlign:"center"}}>
-                    <div style={{color:"#6B7280",fontFamily:"'IBM Plex Mono',monospace",fontSize:8}}>TOTAL</div>
-                    <div style={{color:"#fff",fontSize:16,fontWeight:700,fontFamily:"'Rajdhani',sans-serif"}}>{stats.totalStrokes||"—"}</div>
+                    <div style={{color:"#6B7280",fontFamily:"'IBM Plex Mono',monospace",fontSize:8}}>SHOTS</div>
+                    <div style={{color:"#fff",fontSize:16,fontWeight:700,fontFamily:"'Rajdhani',sans-serif"}}>{stats.totalShots}</div>
                   </div>
                 </div>
-                {stats.holesScored>0 && (
-                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:12}}>
-                    <div style={{background:"rgba(0,0,0,0.2)",borderRadius:6,padding:"8px 8px",textAlign:"center"}}>
-                      <div style={{color:"#6B7280",fontFamily:"'IBM Plex Mono',monospace",fontSize:8}}>BEST HOLE</div>
-                      <div style={{color:"#4CAF50",fontSize:14,fontWeight:700,fontFamily:"'Rajdhani',sans-serif"}}>
-                        #{stats.bestHole} ({stats.bestDiff===0?"E":stats.bestDiff>0?`+${stats.bestDiff}`:stats.bestDiff})
-                      </div>
-                    </div>
-                    <div style={{background:"rgba(0,0,0,0.2)",borderRadius:6,padding:"8px 8px",textAlign:"center"}}>
-                      <div style={{color:"#6B7280",fontFamily:"'IBM Plex Mono',monospace",fontSize:8}}>WORST HOLE</div>
-                      <div style={{color:"#F87171",fontSize:14,fontWeight:700,fontFamily:"'Rajdhani',sans-serif"}}>
-                        #{stats.worstHole} ({stats.worstDiff===0?"E":stats.worstDiff>0?`+${stats.worstDiff}`:stats.worstDiff})
-                      </div>
-                    </div>
-                  </div>
-                )}
-                {stats.avgDist>0 && (
-                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:12}}>
-                    <div style={{background:"rgba(0,0,0,0.2)",borderRadius:6,padding:"8px 8px",textAlign:"center"}}>
-                      <div style={{color:"#6B7280",fontFamily:"'IBM Plex Mono',monospace",fontSize:8}}>AVG SHOT</div>
-                      <div style={{color:"#fff",fontSize:14,fontWeight:700,fontFamily:"'Rajdhani',sans-serif"}}>{stats.avgDist}y</div>
-                    </div>
-                    <div style={{background:"rgba(0,0,0,0.2)",borderRadius:6,padding:"8px 8px",textAlign:"center"}}>
-                      <div style={{color:"#6B7280",fontFamily:"'IBM Plex Mono',monospace",fontSize:8}}>LONGEST</div>
-                      <div style={{color:"#fff",fontSize:14,fontWeight:700,fontFamily:"'Rajdhani',sans-serif"}}>{stats.longestShot}y</div>
-                    </div>
-                  </div>
-                )}
+                {/* Scoring distribution mini bar */}
                 {stats.holesScored>0 && (
                   <div style={{display:"flex",gap:2,borderRadius:4,overflow:"hidden",height:8}}>
                     {distItems.filter(d=>d.val>0).map(d=>(
