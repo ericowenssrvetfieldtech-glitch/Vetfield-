@@ -8,6 +8,7 @@ const corsHeaders = {
 
 interface HoleScore {
   strokes: number;
+  putts?: number;
 }
 
 interface HoleDef {
@@ -36,13 +37,31 @@ function buildEmailHtml(payload: RoundSummaryPayload): string {
     return Object.values(playerScores).reduce((s, h) => s + (h.strokes || 0), 0);
   });
 
+  // Calculate per-player stats
+  const playerStats = playerKeys.map((pk) => {
+    let birdies = 0, pars = 0, bogeys = 0, doubles = 0, holesPlayed = 0;
+    holes.forEach((h) => {
+      const s = scores[pk]?.[String(h.number)]?.strokes;
+      if (!s) return;
+      holesPlayed++;
+      const d = s - h.par;
+      if (d <= -1) birdies++;
+      else if (d === 0) pars++;
+      else if (d === 1) bogeys++;
+      else doubles++;
+    });
+    const total = playerTotals[playerKeys.indexOf(pk)];
+    const scoringAvg = holesPlayed > 0 ? (total / holesPlayed).toFixed(1) : "-";
+    return { birdies, pars, bogeys, doubles, holesPlayed, scoringAvg };
+  });
+
   const holeRows = holes
     .map((h) => {
       const cells = playerKeys
         .map((pk) => {
           const s = scores[pk]?.[String(h.number)]?.strokes || 0;
           const diff = s - h.par;
-          const color = diff < 0 ? "#16a34a" : diff > 0 ? "#dc2626" : "#6b7280";
+          const color = s === 0 ? "#6b7280" : diff < 0 ? "#16a34a" : diff > 0 ? "#dc2626" : "#e5e7eb";
           return `<td style="padding:6px 10px;text-align:center;color:${color};font-weight:600;">${s || "-"}</td>`;
         })
         .join("");
@@ -61,14 +80,29 @@ function buildEmailHtml(payload: RoundSummaryPayload): string {
 
   const totalCells = playerTotals
     .map((t) => {
+      if (t === 0) return `<td style="padding:8px 10px;text-align:center;color:#6b7280;">-</td>`;
       const diff = t - totalPar;
       const label = diff === 0 ? "E" : diff > 0 ? `+${diff}` : String(diff);
       return `<td style="padding:8px 10px;text-align:center;font-weight:700;color:#fff;">${t} (${label})</td>`;
     })
     .join("");
 
-  return `
-<!DOCTYPE html>
+  // Stats table
+  const statsRows = playerKeys
+    .map((_, i) => {
+      const s = playerStats[i];
+      return `<tr style="border-bottom:1px solid #1f2937;">
+        <td style="padding:8px 10px;color:#c8960c;font-weight:600;">${players[i]}</td>
+        <td style="padding:8px 10px;text-align:center;color:#16a34a;font-weight:600;">${s.birdies}</td>
+        <td style="padding:8px 10px;text-align:center;color:#e5e7eb;font-weight:600;">${s.pars}</td>
+        <td style="padding:8px 10px;text-align:center;color:#f97316;font-weight:600;">${s.bogeys}</td>
+        <td style="padding:8px 10px;text-align:center;color:#dc2626;font-weight:600;">${s.doubles}</td>
+        <td style="padding:8px 10px;text-align:center;color:#9ca3af;font-weight:600;">${s.scoringAvg}</td>
+      </tr>`;
+    })
+    .join("");
+
+  return `<!DOCTYPE html>
 <html>
 <head><meta charset="utf-8"/></head>
 <body style="margin:0;padding:20px;background:#050e1a;font-family:'Segoe UI',Arial,sans-serif;">
@@ -78,16 +112,18 @@ function buildEmailHtml(payload: RoundSummaryPayload): string {
       <p style="margin:4px 0 0;color:#c8960c;font-size:13px;letter-spacing:3px;">ROUND SUMMARY</p>
     </div>
     <div style="padding:20px;">
-      <div style="display:flex;justify-content:space-between;margin-bottom:16px;">
-        <div>
-          <div style="color:#9ca3af;font-size:11px;text-transform:uppercase;letter-spacing:1px;">Course</div>
-          <div style="color:#fff;font-size:16px;font-weight:700;margin-top:2px;">${courseName}</div>
-        </div>
-        <div style="text-align:right;">
-          <div style="color:#9ca3af;font-size:11px;text-transform:uppercase;letter-spacing:1px;">Date</div>
-          <div style="color:#fff;font-size:14px;margin-top:2px;">${date}</div>
-        </div>
-      </div>
+      <table style="width:100%;margin-bottom:16px;" cellpadding="0" cellspacing="0">
+        <tr>
+          <td style="vertical-align:top;">
+            <div style="color:#9ca3af;font-size:11px;text-transform:uppercase;letter-spacing:1px;">Course</div>
+            <div style="color:#fff;font-size:16px;font-weight:700;margin-top:2px;">${courseName}</div>
+          </td>
+          <td style="vertical-align:top;text-align:right;">
+            <div style="color:#9ca3af;font-size:11px;text-transform:uppercase;letter-spacing:1px;">Date</div>
+            <div style="color:#fff;font-size:14px;margin-top:2px;">${date}</div>
+          </td>
+        </tr>
+      </table>
       <table style="width:100%;border-collapse:collapse;font-size:13px;background:#0a1a30;border-radius:8px;overflow:hidden;">
         <thead>
           <tr style="background:#0d2240;border-bottom:2px solid #1e3a5f;">
@@ -106,6 +142,22 @@ function buildEmailHtml(payload: RoundSummaryPayload): string {
           </tr>
         </tbody>
       </table>
+      <div style="margin-top:20px;">
+        <div style="color:#c8960c;font-size:11px;letter-spacing:2px;font-weight:700;margin-bottom:8px;">STATS</div>
+        <table style="width:100%;border-collapse:collapse;font-size:12px;background:#0a1a30;border-radius:8px;overflow:hidden;">
+          <thead>
+            <tr style="background:#0d2240;">
+              <th style="padding:8px 10px;color:#6b7280;text-align:left;font-size:10px;">PLAYER</th>
+              <th style="padding:8px 10px;color:#6b7280;font-size:10px;">BRD</th>
+              <th style="padding:8px 10px;color:#6b7280;font-size:10px;">PAR</th>
+              <th style="padding:8px 10px;color:#6b7280;font-size:10px;">BGY</th>
+              <th style="padding:8px 10px;color:#6b7280;font-size:10px;">DBL+</th>
+              <th style="padding:8px 10px;color:#6b7280;font-size:10px;">AVG</th>
+            </tr>
+          </thead>
+          <tbody>${statsRows}</tbody>
+        </table>
+      </div>
       <div style="margin-top:20px;padding:12px;background:rgba(200,150,12,0.08);border:1px solid rgba(200,150,12,0.2);border-radius:8px;text-align:center;">
         <div style="color:#c8960c;font-size:11px;letter-spacing:1px;">POWERED BY VETFIELD SMARTCART</div>
       </div>
@@ -133,7 +185,7 @@ Deno.serve(async (req: Request) => {
     const RESEND_API_KEY = Deno.env.get("RESEND_API_KEY");
     if (!RESEND_API_KEY) {
       return new Response(
-        JSON.stringify({ error: "Email service not configured. Contact admin to set up RESEND_API_KEY." }),
+        JSON.stringify({ error: "Email service not configured" }),
         { status: 503, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
@@ -147,7 +199,7 @@ Deno.serve(async (req: Request) => {
         Authorization: `Bearer ${RESEND_API_KEY}`,
       },
       body: JSON.stringify({
-        from: "VetField Golf <noreply@vetfield.com>",
+        from: "VetField Golf <onboarding@resend.dev>",
         to: [payload.email],
         subject: `Round Summary - ${payload.courseName} (${payload.date})`,
         html,
