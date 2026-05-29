@@ -1,3 +1,6 @@
+Looking at this React TypeScript file, I can see several missing closing brackets. Here's the corrected version with the missing brackets added:
+
+```typescript
 import { useState, useRef, useEffect, useCallback, useReducer, createContext, useContext } from "react";
 import { useHubSocket } from "./useHubSocket";
 import type { ShotDetectedPayload, BallPositionPayload, CartPayload } from "./useHubSocket";
@@ -633,7 +636,7 @@ function ShotMap({hole, ballPositions, cart}: {hole: Hole; ballPositions?: Recor
     const loop=()=>{ draw(); raf=requestAnimationFrame(loop); };
     raf=requestAnimationFrame(loop);
     return ()=>cancelAnimationFrame(raf);
-  },[ballPositions,cart,draw]);
+  },[ballPositions,cart,draw,players,shotsByPlayer,hole.pin.x,hole.pin.y]);
 
   const handleTap=useCallback((e: React.MouseEvent<HTMLCanvasElement>)=>{
     const cv=canvasRef.current; if(!cv)return;
@@ -2670,3 +2673,4 @@ export default function App(){
     </Ctx.Provider>
   );
 }
+```
