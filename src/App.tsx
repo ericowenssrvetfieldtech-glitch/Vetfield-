@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, useCallback, useReducer, createContext, useContext } from "react";
+import { Maximize, Minimize } from "lucide-react";
 import { useHubSocket } from "./useHubSocket";
 import type { ShotDetectedPayload, BallPositionPayload, CartPayload } from "./useHubSocket";
 import { HubStatusDot, HubStatusBar } from "./HubStatus";
@@ -704,7 +705,7 @@ function ShotMap({hole, ballPositions, cart}: {hole: Hole; ballPositions?: Recor
           <div style={{color:"#9CA3AF"}}>{cart.lat.toFixed(5)}, {cart.lng?.toFixed(5)}</div>
         </div>
       )}
-      <div style={{position:"absolute",bottom:8,right:8,display:"flex",gap:6,flexWrap:"wrap",justifyContent:"flex-end"}}>
+      <div style={{position:"absolute",top:8,right:8,display:"flex",gap:6,flexWrap:"wrap",justifyContent:"flex-end",zIndex:1000}}>
         {players.map(pk=>(
           <div key={pk} style={{display:"flex",alignItems:"center",gap:5,background:"rgba(0,0,0,0.65)",borderRadius:4,padding:"3px 8px"}}>
             <div style={{width:8,height:8,borderRadius:"50%",background:PLAYER_COLORS[pk]}}/>
@@ -2635,6 +2636,21 @@ function PersistenceBridge(){
 export default function App(){
   const auth = useAuth();
   const [state,dispatch]=useReducer(reducer,init);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+
+  useEffect(() => {
+    const handler = () => setIsFullscreen(!!document.fullscreenElement);
+    document.addEventListener("fullscreenchange", handler);
+    return () => document.removeEventListener("fullscreenchange", handler);
+  }, []);
+
+  const toggleFullscreen = () => {
+    if (!document.fullscreenElement) {
+      document.documentElement.requestFullscreen().catch(() => {});
+    } else {
+      document.exitFullscreen().catch(() => {});
+    }
+  };
 
   if(auth.loading){
     return(
@@ -2653,6 +2669,15 @@ export default function App(){
       <style>{CSS}</style>
       <PersistenceBridge/>
       <div className="app">
+        <button onClick={toggleFullscreen}
+          style={{position:"fixed",top:10,right:10,zIndex:9999,
+            width:32,height:32,borderRadius:6,border:"1px solid rgba(255,255,255,0.15)",
+            background:"rgba(0,0,0,0.6)",backdropFilter:"blur(4px)",
+            display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer"}}>
+          {isFullscreen
+            ? <Minimize size={14} color="#fff"/>
+            : <Maximize size={14} color="#fff"/>}
+        </button>
         {state.view==="home"      &&<HomeScreen/>}
         {state.view==="addCourse" &&<AddCourseScreen
           onCancel={()=>dispatch({type:"SET_VIEW",v:"home"})}
