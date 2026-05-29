@@ -39,14 +39,27 @@ export default function GoogleMapView({ hole, shots = [], cartPosition, height =
   const layersRef = useRef<any[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const holeKeyRef = useRef<string>("");
+
+  const holeKey = `${hole.number}-${hole.tee.lat.toFixed(5)}-${hole.tee.lng.toFixed(5)}`;
 
   useEffect(() => {
-    if (!containerRef.current || mapRef.current) return;
+    if (!containerRef.current) return;
 
     if (typeof L === "undefined") {
       setError("Map library failed to load. Check your internet connection.");
       return;
     }
+
+    if (mapRef.current && holeKeyRef.current === holeKey) return;
+
+    if (mapRef.current) {
+      mapRef.current.remove();
+      mapRef.current = null;
+      setLoaded(false);
+    }
+
+    holeKeyRef.current = holeKey;
 
     try {
       const center: [number, number] = [
@@ -77,8 +90,7 @@ export default function GoogleMapView({ hole, shots = [], cartPosition, height =
         mapRef.current = null;
       }
     };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [holeKey, hole.tee.lat, hole.tee.lng, hole.pin.lat, hole.pin.lng]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -87,7 +99,6 @@ export default function GoogleMapView({ hole, shots = [], cartPosition, height =
     layersRef.current.forEach(layer => map.removeLayer(layer));
     layersRef.current = [];
 
-    // Draw fairway polygon
     if (hole.fairway && hole.fairway.length > 2) {
       const coords = hole.fairway.map((p: GpsPoint) => [p.lat, p.lng]);
       const poly = L.polygon(coords, {
@@ -100,7 +111,6 @@ export default function GoogleMapView({ hole, shots = [], cartPosition, height =
       layersRef.current.push(poly);
     }
 
-    // Draw green polygon
     if (hole.green && hole.green.length > 2) {
       const coords = hole.green.map((p: GpsPoint) => [p.lat, p.lng]);
       const poly = L.polygon(coords, {
@@ -113,7 +123,6 @@ export default function GoogleMapView({ hole, shots = [], cartPosition, height =
       layersRef.current.push(poly);
     }
 
-    // Draw hazards
     hole.hazards?.forEach((hz) => {
       const colors: Record<string, { stroke: string; fill: string }> = {
         water: { stroke: "#1E88E5", fill: "#1E88E5" },
@@ -132,7 +141,6 @@ export default function GoogleMapView({ hole, shots = [], cartPosition, height =
       layersRef.current.push(poly);
     });
 
-    // Tee marker
     const teeIcon = L.divIcon({
       className: "",
       html: `<div style="width:20px;height:20px;border-radius:50%;background:#fff;border:2px solid #1B3A6B;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:bold;color:#1B3A6B;font-family:monospace;">T</div>`,
@@ -142,7 +150,6 @@ export default function GoogleMapView({ hole, shots = [], cartPosition, height =
     const teeMarker = L.marker([hole.tee.lat, hole.tee.lng], { icon: teeIcon }).addTo(map);
     layersRef.current.push(teeMarker);
 
-    // Pin marker
     const pinIcon = L.divIcon({
       className: "",
       html: `<div style="width:16px;height:16px;border-radius:50%;background:#EF4444;border:2px solid #fff;"></div>`,
@@ -152,7 +159,6 @@ export default function GoogleMapView({ hole, shots = [], cartPosition, height =
     const pinMarker = L.marker([hole.pin.lat, hole.pin.lng], { icon: pinIcon }).addTo(map);
     layersRef.current.push(pinMarker);
 
-    // Shot markers and trail
     if (shots.length > 0) {
       const path = shots.map(s => [s.lat, s.lng] as [number, number]);
       const trail = L.polyline(path, {
@@ -174,7 +180,6 @@ export default function GoogleMapView({ hole, shots = [], cartPosition, height =
       });
     }
 
-    // Cart marker
     if (cartPosition) {
       const cartIcon = L.divIcon({
         className: "",
@@ -186,7 +191,6 @@ export default function GoogleMapView({ hole, shots = [], cartPosition, height =
       layersRef.current.push(marker);
     }
 
-    // Fit bounds
     const bounds = L.latLngBounds([
       [hole.tee.lat, hole.tee.lng],
       [hole.pin.lat, hole.pin.lng],
