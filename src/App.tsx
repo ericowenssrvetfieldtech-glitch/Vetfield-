@@ -5,8 +5,6 @@ import type { ShotDetectedPayload, BallPositionPayload, CartPayload } from "./us
 import { HubStatusDot, HubStatusBar } from "./HubStatus";
 import AddCourseScreen from "./AddCourseScreen";
 import GlassesPanel from "./GlassesPanel";
-import GoogleMapView from "./GoogleMapView";
-import type { GoogleMapHole } from "./GoogleMapView";
 import { useAuth } from "./AuthContext";
 import { AuthScreen } from "./AuthScreen";
 import {
@@ -230,7 +228,7 @@ function ShotMap({hole, ballPositions, cart}: {hole: Hole; ballPositions?: Recor
   const {state,dispatch}=useGame();
   const players = usePlayers();
   const canvasRef=useRef<HTMLCanvasElement>(null);
-  const [mapMode,setMapMode]=useState<"satellite"|"chart"|"google">("satellite");
+  const [mapMode,setMapMode]=useState<"satellite"|"chart">("satellite");
 
   const shotsByPlayer = Object.fromEntries(
     players.map(pk => [pk, state.shots[pk][hole.number] || []])
@@ -648,50 +646,19 @@ function ShotMap({hole, ballPositions, cart}: {hole: Hole; ballPositions?: Recor
     dispatch({type:"ADD_SHOT",pl:state.activePlayer,hn:hole.number,sh:{x,y,dist,ts:Date.now()}});
   },[hole,state.activePlayer,state.shots,dispatch]);
 
-  const hasGps = !!(hole.gps_tee && hole.gps_pin);
-
-  const googleHole: GoogleMapHole | null = hasGps ? {
-    number: hole.number,
-    par: hole.par,
-    yards: hole.yards,
-    tee: hole.gps_tee!,
-    pin: hole.gps_pin!,
-    fairway: hole.gps_fairway,
-    green: hole.gps_green,
-    hazards: hole.gps_hazards,
-  } : null;
-
   return(
     <div style={{position:"relative",width:"100%"}}>
-      {mapMode === "google" && googleHole ? (
-        <GoogleMapView
-          hole={googleHole}
-          height={440}
-          cartPosition={cart && cart.lat != null ? { lat: cart.lat, lng: cart.lng! } : null}
-        />
-      ) : mapMode === "google" && !googleHole ? (
-        <div style={{width:"100%",height:440,borderRadius:8,border:"1px solid rgba(255,255,255,0.08)",
-          background:"rgba(0,0,0,0.85)",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:10,padding:20}}>
-          <div style={{color:"#C8960C",fontFamily:"'IBM Plex Mono',monospace",fontSize:12,letterSpacing:1}}>
-            SATELLITE MAP
-          </div>
-          <div style={{color:"#9CA3AF",fontSize:12,textAlign:"center",maxWidth:280}}>
-            This course does not have GPS coordinates. Add gps_tee and gps_pin to the hole data.
-          </div>
-        </div>
-      ) : (
-        <canvas ref={canvasRef} width={580} height={440} onClick={handleTap}
-          style={{width:"100%",height:440,cursor:"crosshair",borderRadius:8,border:"1px solid rgba(255,255,255,0.08)",display:"block"}}/>
-      )}
+      <canvas ref={canvasRef} width={580} height={440} onClick={handleTap}
+        style={{width:"100%",height:440,cursor:"crosshair",borderRadius:8,border:"1px solid rgba(255,255,255,0.08)",display:"block"}}/>
       <div style={{position:"absolute",bottom:8,left:8,display:"flex",background:"rgba(0,0,0,0.7)",
         border:`1px solid ${GOLD}40`,borderRadius:6,overflow:"hidden"}}>
-        {(["google","satellite","chart"] as const).map(m=>(
+        {(["satellite","chart"] as const).map(m=>(
           <button key={m} onClick={()=>setMapMode(m)}
             style={{padding:"5px 10px",border:"none",cursor:"pointer",
               background: mapMode===m ? GOLD : "transparent",
               color: mapMode===m ? "#000" : "#fff",
               fontFamily:"'IBM Plex Mono',monospace",fontSize:10,letterSpacing:1,fontWeight:700}}>
-            {m==="google"?"SATELLITE VIEW":m.toUpperCase()}
+            {m.toUpperCase()}
           </button>
         ))}
       </div>
