@@ -87,7 +87,45 @@ export async function fetchCourses(): Promise<Course[]> {
     console.warn("[supabase] fetchCourses failed:", error.message);
     return [];
   }
-  return (data || []) as Course[];
+  return ((data || []) as Course[]).map(backfillGps);
+}
+
+const GPS_SPAN_LAT = 0.0036;
+const GPS_SPAN_LNG = 0.0040;
+const DEFAULT_CENTER_LAT = 39.98;
+const DEFAULT_CENTER_LNG = -105.25;
+
+function pointToGps(pt: HolePoint, lat: number, lng: number): GpsPoint {
+  return {
+    lat: lat + (0.5 - pt.y) * GPS_SPAN_LAT,
+    lng: lng + (pt.x - 0.5) * GPS_SPAN_LNG,
+  };
+}
+
+function backfillGps(course: Course): Course {
+  const needsBackfill = course.holes.some(h => !h.gps_tee || !h.gps_pin);
+  if (!needsBackfill) return course;
+
+  const cLat = DEFAULT_CENTER_LAT;
+  const cLng = DEFAULT_CENTER_LNG;
+
+  return {
+    ...course,
+    holes: course.holes.map(h => {
+      if (h.gps_tee && h.gps_pin) return h;
+      return {
+        ...h,
+        gps_tee: h.gps_tee || pointToGps(h.tee, cLat, cLng),
+        gps_pin: h.gps_pin || pointToGps(h.pin, cLat, cLng),
+        gps_fairway: h.gps_fairway || h.fairway.map(pt => pointToGps(pt, cLat, cLng)),
+        gps_green: h.gps_green || h.green.map(pt => pointToGps(pt, cLat, cLng)),
+        gps_hazards: h.gps_hazards || h.hazards?.map(hz => ({
+          type: hz.type,
+          pts: hz.pts.map(pt => pointToGps(pt, cLat, cLng)),
+        })),
+      };
+    }),
+  };
 }
 
 // ── Rounds ────────────────────────────────────────────────────────────────────

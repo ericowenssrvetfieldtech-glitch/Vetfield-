@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { createCourse } from "./lib/supabase";
-import type { Hole, HolePoint, Course } from "./lib/supabase";
+import type { Hole, HolePoint, GpsPoint, Course } from "./lib/supabase";
 
 const NAVY = "#1B3A6B", GREEN = "#2E7D32", GOLD = "#C8960C";
 
@@ -18,6 +18,18 @@ interface DraftHole {
 const emptyHole = (): DraftHole => ({
   par: 4, yards: 380, tee: null, pin: null, fairway: [], green: [],
 });
+
+// Convert normalized canvas coords (0-1) to GPS around a center point.
+// A golf hole spans roughly 400m N-S and 300m E-W.
+const COURSE_SPAN_LAT = 0.0036; // ~400m in latitude degrees
+const COURSE_SPAN_LNG = 0.0040; // ~300m in longitude degrees (varies by latitude)
+
+function canvasToGps(pt: HolePoint, centerLat: number, centerLng: number): GpsPoint {
+  return {
+    lat: centerLat + (0.5 - pt.y) * COURSE_SPAN_LAT,
+    lng: centerLng + (pt.x - 0.5) * COURSE_SPAN_LNG,
+  };
+}
 
 const isComplete = (h: DraftHole) =>
   !!h.tee && !!h.pin && h.fairway.length >= 3 && h.green.length >= 3;
@@ -142,6 +154,11 @@ export default function AddCourseScreen({ onCancel, onSaved }: Props) {
       return;
     }
     setSaving(true);
+
+    // Use a default center for GPS mapping (Boulder, CO area as fallback)
+    const centerLat = 39.98;
+    const centerLng = -105.25;
+
     const payload: Hole[] = holes.map((h, i) => ({
       number: i + 1,
       par: h.par,
@@ -150,6 +167,10 @@ export default function AddCourseScreen({ onCancel, onSaved }: Props) {
       pin: h.pin!,
       fairway: h.fairway,
       green: h.green,
+      gps_tee: canvasToGps(h.tee!, centerLat, centerLng),
+      gps_pin: canvasToGps(h.pin!, centerLat, centerLng),
+      gps_fairway: h.fairway.map(pt => canvasToGps(pt, centerLat, centerLng)),
+      gps_green: h.green.map(pt => canvasToGps(pt, centerLat, centerLng)),
     }));
     const created = await createCourse({
       name: name.trim(),
