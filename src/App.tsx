@@ -691,7 +691,7 @@ function ShotMap({hole, ballPositions, cart}: {hole: Hole; ballPositions?: Recor
               background: mapMode===m ? GOLD : "transparent",
               color: mapMode===m ? "#000" : "#fff",
               fontFamily:"'IBM Plex Mono',monospace",fontSize:10,letterSpacing:1,fontWeight:700}}>
-            {m.toUpperCase()}
+            {m==="google"?"SATELLITE VIEW":m.toUpperCase()}
           </button>
         ))}
       </div>
