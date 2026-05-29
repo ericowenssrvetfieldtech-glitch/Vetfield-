@@ -92,8 +92,32 @@ export async function fetchCourses(): Promise<Course[]> {
 
 const GPS_SPAN_LAT = 0.0036;
 const GPS_SPAN_LNG = 0.0040;
-const DEFAULT_CENTER_LAT = 39.98;
-const DEFAULT_CENTER_LNG = -105.25;
+
+const COURSE_CENTERS: Record<string, { lat: number; lng: number }> = {
+  "le-ramey": { lat: 27.5158, lng: -97.8561 },
+  "kings-crossing": { lat: 27.6418, lng: -97.3475 },
+  "oso-beach": { lat: 27.6900, lng: -97.3670 },
+  "falcon-ridge": { lat: 39.9800, lng: -105.2500 },
+  "coastal-dunes": { lat: 30.2130, lng: -97.7700 },
+  "pinewood-national": { lat: 33.4500, lng: -84.4700 },
+};
+
+function hashSlug(slug: string): number {
+  let h = 0;
+  for (let i = 0; i < slug.length; i++) {
+    h = ((h << 5) - h + slug.charCodeAt(i)) | 0;
+  }
+  return h;
+}
+
+function getCourseCenter(slug: string): { lat: number; lng: number } {
+  if (COURSE_CENTERS[slug]) return COURSE_CENTERS[slug];
+  const h = hashSlug(slug);
+  return {
+    lat: 25 + (Math.abs(h) % 2000) / 100,
+    lng: -80 - (Math.abs(h >> 8) % 3000) / 100,
+  };
+}
 
 function pointToGps(pt: HolePoint, lat: number, lng: number): GpsPoint {
   return {
@@ -106,8 +130,7 @@ function backfillGps(course: Course): Course {
   const needsBackfill = course.holes.some(h => !h.gps_tee || !h.gps_pin);
   if (!needsBackfill) return course;
 
-  const cLat = DEFAULT_CENTER_LAT;
-  const cLng = DEFAULT_CENTER_LNG;
+  const { lat: cLat, lng: cLng } = getCourseCenter(course.slug);
 
   return {
     ...course,
