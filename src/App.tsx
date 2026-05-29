@@ -647,7 +647,6 @@ function ShotMap({hole, ballPositions, cart}: {hole: Hole; ballPositions?: Recor
     dispatch({type:"ADD_SHOT",pl:state.activePlayer,hn:hole.number,sh:{x,y,dist,ts:Date.now()}});
   },[hole,state.activePlayer,state.shots,dispatch]);
 
-  const googleApiKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY as string || "";
   const hasGps = !!(hole.gps_tee && hole.gps_pin);
 
   const googleHole: GoogleMapHole | null = hasGps ? {
@@ -663,23 +662,20 @@ function ShotMap({hole, ballPositions, cart}: {hole: Hole; ballPositions?: Recor
 
   return(
     <div style={{position:"relative",width:"100%"}}>
-      {mapMode === "google" && googleHole && googleApiKey ? (
+      {mapMode === "google" && googleHole ? (
         <GoogleMapView
-          apiKey={googleApiKey}
           hole={googleHole}
           height={440}
           cartPosition={cart && cart.lat != null ? { lat: cart.lat, lng: cart.lng! } : null}
         />
-      ) : mapMode === "google" && (!googleHole || !googleApiKey) ? (
+      ) : mapMode === "google" && !googleHole ? (
         <div style={{width:"100%",height:440,borderRadius:8,border:"1px solid rgba(255,255,255,0.08)",
           background:"rgba(0,0,0,0.85)",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:10,padding:20}}>
           <div style={{color:"#C8960C",fontFamily:"'IBM Plex Mono',monospace",fontSize:12,letterSpacing:1}}>
-            GOOGLE MAPS
+            SATELLITE MAP
           </div>
           <div style={{color:"#9CA3AF",fontSize:12,textAlign:"center",maxWidth:280}}>
-            {!googleApiKey
-              ? "Add VITE_GOOGLE_MAPS_API_KEY to your .env file to enable satellite imagery."
-              : "This course does not have GPS coordinates. Add gps_tee and gps_pin to the hole data."}
+            This course does not have GPS coordinates. Add gps_tee and gps_pin to the hole data.
           </div>
         </div>
       ) : (

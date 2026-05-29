@@ -1,5 +1,4 @@
-import { useEffect, useRef, useState, useCallback } from "react";
-import { importLibrary, setOptions } from "@googlemaps/js-api-loader";
+import { useEffect, useRef, useState } from "react";
 
 export interface GpsPoint {
   lat: number;
@@ -26,219 +25,175 @@ interface ShotMarker {
 }
 
 interface Props {
-  apiKey: string;
   hole: GoogleMapHole;
   shots?: ShotMarker[];
   cartPosition?: GpsPoint | null;
   height?: number;
 }
 
-let optionsSet = false;
+declare const L: any;
 
-function ensureOptions(apiKey: string) {
-  if (!optionsSet) {
-    setOptions({ key: apiKey, v: "weekly" });
-    optionsSet = true;
-  }
-}
-
-export default function GoogleMapView({ apiKey, hole, shots = [], cartPosition, height = 440 }: Props) {
+export default function GoogleMapView({ hole, shots = [], cartPosition, height = 440 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const mapRef = useRef<google.maps.Map | null>(null);
-  const markersRef = useRef<google.maps.Marker[]>([]);
-  const polylinesRef = useRef<google.maps.Polyline[]>([]);
-  const polygonsRef = useRef<google.maps.Polygon[]>([]);
+  const mapRef = useRef<any>(null);
+  const layersRef = useRef<any[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const initMap = useCallback(async () => {
-    if (!containerRef.current || !apiKey) return;
+  useEffect(() => {
+    if (!containerRef.current || mapRef.current) return;
+
+    if (typeof L === "undefined") {
+      setError("Map library failed to load. Check your internet connection.");
+      return;
+    }
 
     try {
-      ensureOptions(apiKey);
-      await importLibrary("maps");
-      await importLibrary("marker");
+      const center: [number, number] = [
+        (hole.tee.lat + hole.pin.lat) / 2,
+        (hole.tee.lng + hole.pin.lng) / 2,
+      ];
 
-      const center = {
-        lat: (hole.tee.lat + hole.pin.lat) / 2,
-        lng: (hole.tee.lng + hole.pin.lng) / 2,
-      };
-
-      const map = new google.maps.Map(containerRef.current, {
+      const map = L.map(containerRef.current, {
         center,
         zoom: 18,
-        mapTypeId: "satellite",
-        disableDefaultUI: true,
         zoomControl: true,
-        tilt: 0,
-        gestureHandling: "greedy",
-        styles: [
-          { featureType: "all", elementType: "labels", stylers: [{ visibility: "off" }] },
-        ],
+        attributionControl: false,
       });
+
+      L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}", {
+        maxZoom: 20,
+      }).addTo(map);
 
       mapRef.current = map;
       setLoaded(true);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to load Google Maps");
+      setError(e instanceof Error ? e.message : "Failed to load map");
     }
-  }, [apiKey, hole.tee.lat, hole.tee.lng, hole.pin.lat, hole.pin.lng]);
 
-  useEffect(() => {
-    initMap();
-  }, [initMap]);
+    return () => {
+      if (mapRef.current) {
+        mapRef.current.remove();
+        mapRef.current = null;
+      }
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !loaded) return;
 
-    // Clear previous overlays
-    markersRef.current.forEach(m => m.setMap(null));
-    markersRef.current = [];
-    polylinesRef.current.forEach(p => p.setMap(null));
-    polylinesRef.current = [];
-    polygonsRef.current.forEach(p => p.setMap(null));
-    polygonsRef.current = [];
+    layersRef.current.forEach(layer => map.removeLayer(layer));
+    layersRef.current = [];
 
     // Draw fairway polygon
     if (hole.fairway && hole.fairway.length > 2) {
-      const fairwayPoly = new google.maps.Polygon({
-        paths: hole.fairway,
-        strokeColor: "#4CAF50",
-        strokeOpacity: 0.7,
-        strokeWeight: 2,
+      const coords = hole.fairway.map((p: GpsPoint) => [p.lat, p.lng]);
+      const poly = L.polygon(coords, {
+        color: "#4CAF50",
+        weight: 2,
+        opacity: 0.7,
         fillColor: "#4CAF50",
         fillOpacity: 0.15,
-        map,
-      });
-      polygonsRef.current.push(fairwayPoly);
+      }).addTo(map);
+      layersRef.current.push(poly);
     }
 
     // Draw green polygon
     if (hole.green && hole.green.length > 2) {
-      const greenPoly = new google.maps.Polygon({
-        paths: hole.green,
-        strokeColor: "#66BB6A",
-        strokeOpacity: 0.9,
-        strokeWeight: 2,
+      const coords = hole.green.map((p: GpsPoint) => [p.lat, p.lng]);
+      const poly = L.polygon(coords, {
+        color: "#66BB6A",
+        weight: 2,
+        opacity: 0.9,
         fillColor: "#81C784",
         fillOpacity: 0.3,
-        map,
-      });
-      polygonsRef.current.push(greenPoly);
+      }).addTo(map);
+      layersRef.current.push(poly);
     }
 
     // Draw hazards
-    hole.hazards?.forEach(hz => {
+    hole.hazards?.forEach((hz) => {
       const colors: Record<string, { stroke: string; fill: string }> = {
         water: { stroke: "#1E88E5", fill: "#1E88E5" },
         bunker: { stroke: "#FDD835", fill: "#FDD835" },
         trees: { stroke: "#2E7D32", fill: "#1B5E20" },
       };
       const c = colors[hz.type] || colors.water;
-      const poly = new google.maps.Polygon({
-        paths: hz.pts,
-        strokeColor: c.stroke,
-        strokeOpacity: 0.8,
-        strokeWeight: 1.5,
+      const coords = hz.pts.map((p: GpsPoint) => [p.lat, p.lng]);
+      const poly = L.polygon(coords, {
+        color: c.stroke,
+        weight: 1.5,
+        opacity: 0.8,
         fillColor: c.fill,
         fillOpacity: hz.type === "water" ? 0.3 : 0.2,
-        map,
-      });
-      polygonsRef.current.push(poly);
+      }).addTo(map);
+      layersRef.current.push(poly);
     });
 
     // Tee marker
-    const teeMarker = new google.maps.Marker({
-      position: hole.tee,
-      map,
-      label: { text: "T", color: "#1B3A6B", fontWeight: "bold", fontSize: "11px" },
-      icon: {
-        path: google.maps.SymbolPath.CIRCLE,
-        scale: 10,
-        fillColor: "#FFFFFF",
-        fillOpacity: 1,
-        strokeColor: "#1B3A6B",
-        strokeWeight: 2,
-      },
+    const teeIcon = L.divIcon({
+      className: "",
+      html: `<div style="width:20px;height:20px;border-radius:50%;background:#fff;border:2px solid #1B3A6B;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:bold;color:#1B3A6B;font-family:monospace;">T</div>`,
+      iconSize: [20, 20],
+      iconAnchor: [10, 10],
     });
-    markersRef.current.push(teeMarker);
+    const teeMarker = L.marker([hole.tee.lat, hole.tee.lng], { icon: teeIcon }).addTo(map);
+    layersRef.current.push(teeMarker);
 
     // Pin marker
-    const pinMarker = new google.maps.Marker({
-      position: hole.pin,
-      map,
-      icon: {
-        path: google.maps.SymbolPath.CIRCLE,
-        scale: 8,
-        fillColor: "#EF4444",
-        fillOpacity: 1,
-        strokeColor: "#FFFFFF",
-        strokeWeight: 2,
-      },
+    const pinIcon = L.divIcon({
+      className: "",
+      html: `<div style="width:16px;height:16px;border-radius:50%;background:#EF4444;border:2px solid #fff;"></div>`,
+      iconSize: [16, 16],
+      iconAnchor: [8, 8],
     });
-    markersRef.current.push(pinMarker);
+    const pinMarker = L.marker([hole.pin.lat, hole.pin.lng], { icon: pinIcon }).addTo(map);
+    layersRef.current.push(pinMarker);
 
     // Shot markers and trail
     if (shots.length > 0) {
-      const path = shots.map(s => ({ lat: s.lat, lng: s.lng }));
-      const trail = new google.maps.Polyline({
-        path,
-        strokeColor: shots[0]?.color || "#60A5FA",
-        strokeOpacity: 0.8,
-        strokeWeight: 3,
-        geodesic: true,
-        icons: [{
-          icon: { path: google.maps.SymbolPath.FORWARD_CLOSED_ARROW, scale: 3, fillOpacity: 1 },
-          offset: "50%",
-        }],
-        map,
-      });
-      polylinesRef.current.push(trail);
+      const path = shots.map(s => [s.lat, s.lng] as [number, number]);
+      const trail = L.polyline(path, {
+        color: shots[0]?.color || "#60A5FA",
+        weight: 3,
+        opacity: 0.8,
+      }).addTo(map);
+      layersRef.current.push(trail);
 
       shots.forEach((s, idx) => {
-        const marker = new google.maps.Marker({
-          position: { lat: s.lat, lng: s.lng },
-          map,
-          label: { text: String(idx + 1), color: "#000", fontWeight: "bold", fontSize: "9px" },
-          icon: {
-            path: google.maps.SymbolPath.CIRCLE,
-            scale: 8,
-            fillColor: s.color,
-            fillOpacity: 1,
-            strokeColor: "#000",
-            strokeWeight: 1.5,
-          },
+        const shotIcon = L.divIcon({
+          className: "",
+          html: `<div style="width:16px;height:16px;border-radius:50%;background:${s.color};border:1.5px solid #000;display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:bold;color:#000;font-family:monospace;">${idx + 1}</div>`,
+          iconSize: [16, 16],
+          iconAnchor: [8, 8],
         });
-        markersRef.current.push(marker);
+        const marker = L.marker([s.lat, s.lng], { icon: shotIcon }).addTo(map);
+        layersRef.current.push(marker);
       });
     }
 
     // Cart marker
     if (cartPosition) {
-      const cartMarker = new google.maps.Marker({
-        position: cartPosition,
-        map,
-        label: { text: "C", color: "#C8960C", fontWeight: "bold", fontSize: "10px" },
-        icon: {
-          path: google.maps.SymbolPath.CIRCLE,
-          scale: 11,
-          fillColor: "#0F2444",
-          fillOpacity: 1,
-          strokeColor: "#C8960C",
-          strokeWeight: 2.5,
-        },
+      const cartIcon = L.divIcon({
+        className: "",
+        html: `<div style="width:22px;height:22px;border-radius:50%;background:#0F2444;border:2.5px solid #C8960C;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:bold;color:#C8960C;font-family:monospace;">C</div>`,
+        iconSize: [22, 22],
+        iconAnchor: [11, 11],
       });
-      markersRef.current.push(cartMarker);
+      const marker = L.marker([cartPosition.lat, cartPosition.lng], { icon: cartIcon }).addTo(map);
+      layersRef.current.push(marker);
     }
 
-    // Fit bounds to show hole
-    const bounds = new google.maps.LatLngBounds();
-    bounds.extend(hole.tee);
-    bounds.extend(hole.pin);
-    hole.fairway?.forEach(pt => bounds.extend(pt));
-    hole.green?.forEach(pt => bounds.extend(pt));
-    map.fitBounds(bounds, 40);
+    // Fit bounds
+    const bounds = L.latLngBounds([
+      [hole.tee.lat, hole.tee.lng],
+      [hole.pin.lat, hole.pin.lng],
+    ]);
+    hole.fairway?.forEach(pt => bounds.extend([pt.lat, pt.lng]));
+    hole.green?.forEach(pt => bounds.extend([pt.lat, pt.lng]));
+    map.fitBounds(bounds, { padding: [40, 40] });
   }, [loaded, hole, shots, cartPosition]);
 
   if (error) {
@@ -250,7 +205,7 @@ export default function GoogleMapView({ apiKey, hole, shots = [], cartPosition, 
         gap: 8, padding: 20,
       }}>
         <div style={{ color: "#F87171", fontFamily: "'IBM Plex Mono',monospace", fontSize: 12, letterSpacing: 1 }}>
-          GOOGLE MAPS ERROR
+          MAP ERROR
         </div>
         <div style={{ color: "#9CA3AF", fontSize: 12, textAlign: "center", maxWidth: 280 }}>
           {error}
@@ -272,11 +227,10 @@ export default function GoogleMapView({ apiKey, hole, shots = [], cartPosition, 
           </div>
         </div>
       )}
-      {/* Hole info overlay */}
       <div style={{
         position: "absolute", top: 8, left: 8,
         background: "rgba(0,0,0,0.75)", borderRadius: 6, padding: "8px 12px",
-        fontFamily: "'IBM Plex Mono',monospace",
+        fontFamily: "'IBM Plex Mono',monospace", zIndex: 1000,
       }}>
         <div style={{ color: "#C8960C", fontSize: 10, fontWeight: 700, letterSpacing: 1 }}>
           HOLE {hole.number}
