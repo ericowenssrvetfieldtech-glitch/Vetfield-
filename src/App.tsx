@@ -1577,6 +1577,16 @@ function RoundScreen(){
   const hole=course.holes.find(h=>h.number===state.currentHole)||course.holes[0];
   const PANELS=[{id:"map",l:"Map"},{id:"club",l:"Club"},{id:"gapp",l:"GAPP"},{id:"ar",l:"AR Glasses"},{id:"stats",l:"Stats"},{id:"card",l:"Card"}];
 
+  useEffect(()=>{
+    fetchCourses().then(list=>{
+      const fresh=list.find(c=>c.slug===course.slug);
+      if(fresh && fresh.holes.length>course.holes.length){
+        dispatch({type:"SET_COURSE",course:fresh});
+      }
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[]);
+
   const [shotFlash, setShotFlash]=useState(false);
   const shotFlashTimer=useRef<ReturnType<typeof setTimeout>|null>(null);
 
