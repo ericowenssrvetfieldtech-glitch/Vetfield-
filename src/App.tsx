@@ -4,6 +4,8 @@ import type { ShotDetectedPayload, BallPositionPayload, CartPayload } from "./us
 import { HubStatusDot, HubStatusBar } from "./HubStatus";
 import AddCourseScreen from "./AddCourseScreen";
 import GlassesPanel from "./GlassesPanel";
+import GoogleMapView from "./GoogleMapView";
+import type { GoogleMapHole } from "./GoogleMapView";
 import { useAuth } from "./AuthContext";
 import { AuthScreen } from "./AuthScreen";
 import {
@@ -55,7 +57,23 @@ const DEFAULT_COURSE: Course = {
       hazards:[
         {type:"water", pts:[{x:.09,y:.55},{x:.14,y:.55},{x:.14,y:.63},{x:.09,y:.63}]},
         {type:"bunker",pts:[{x:.19,y:.26},{x:.23,y:.26},{x:.23,y:.32},{x:.19,y:.32}]},
-      ]},
+      ],
+      gps_tee:{lat:39.9785,lng:-105.2485},
+      gps_pin:{lat:39.9820,lng:-105.2485},
+      gps_fairway:[
+        {lat:39.9785,lng:-105.2490},{lat:39.9785,lng:-105.2480},
+        {lat:39.9810,lng:-105.2480},{lat:39.9817,lng:-105.2483},
+        {lat:39.9817,lng:-105.2487},{lat:39.9810,lng:-105.2490},
+      ],
+      gps_green:[
+        {lat:39.9818,lng:-105.2488},{lat:39.9818,lng:-105.2482},
+        {lat:39.9822,lng:-105.2482},{lat:39.9822,lng:-105.2488},
+      ],
+      gps_hazards:[
+        {type:"water", pts:[{lat:39.9798,lng:-105.2490},{lat:39.9798,lng:-105.2486},{lat:39.9802,lng:-105.2486},{lat:39.9802,lng:-105.2490}]},
+        {type:"bunker",pts:[{lat:39.9813,lng:-105.2481},{lat:39.9813,lng:-105.2478},{lat:39.9815,lng:-105.2478},{lat:39.9815,lng:-105.2481}]},
+      ],
+    },
     { number:2, par:3, yards:165,
       tee:{x:.38,y:.85}, pin:{x:.38,y:.18},
       fairway:[{x:.33,y:.85},{x:.43,y:.85},{x:.43,y:.18},{x:.33,y:.18}],
@@ -63,7 +81,22 @@ const DEFAULT_COURSE: Course = {
       hazards:[
         {type:"bunker",pts:[{x:.31,y:.20},{x:.35,y:.20},{x:.35,y:.27},{x:.31,y:.27}]},
         {type:"bunker",pts:[{x:.41,y:.18},{x:.44,y:.18},{x:.44,y:.25},{x:.41,y:.25}]},
-      ]},
+      ],
+      gps_tee:{lat:39.9825,lng:-105.2470},
+      gps_pin:{lat:39.9840,lng:-105.2470},
+      gps_fairway:[
+        {lat:39.9825,lng:-105.2474},{lat:39.9825,lng:-105.2466},
+        {lat:39.9840,lng:-105.2466},{lat:39.9840,lng:-105.2474},
+      ],
+      gps_green:[
+        {lat:39.9839,lng:-105.2473},{lat:39.9839,lng:-105.2467},
+        {lat:39.9842,lng:-105.2467},{lat:39.9842,lng:-105.2473},
+      ],
+      gps_hazards:[
+        {type:"bunker",pts:[{lat:39.9838,lng:-105.2475},{lat:39.9838,lng:-105.2473},{lat:39.9840,lng:-105.2473},{lat:39.9840,lng:-105.2475}]},
+        {type:"bunker",pts:[{lat:39.9838,lng:-105.2467},{lat:39.9838,lng:-105.2465},{lat:39.9840,lng:-105.2465},{lat:39.9840,lng:-105.2467}]},
+      ],
+    },
     { number:3, par:5, yards:505,
       tee:{x:.62,y:.88}, pin:{x:.82,y:.15},
       fairway:[{x:.57,y:.88},{x:.67,y:.88},{x:.72,y:.60},{x:.85,y:.40},{x:.87,y:.22},{x:.80,y:.20},{x:.75,y:.38},{x:.62,y:.58},{x:.57,y:.75}],
@@ -71,7 +104,25 @@ const DEFAULT_COURSE: Course = {
       hazards:[
         {type:"water", pts:[{x:.67,y:.62},{x:.73,y:.62},{x:.75,y:.70},{x:.67,y:.70}]},
         {type:"trees", pts:[{x:.85,y:.40},{x:.92,y:.40},{x:.92,y:.60},{x:.85,y:.60}]},
-      ]},
+      ],
+      gps_tee:{lat:39.9845,lng:-105.2460},
+      gps_pin:{lat:39.9870,lng:-105.2440},
+      gps_fairway:[
+        {lat:39.9845,lng:-105.2464},{lat:39.9845,lng:-105.2456},
+        {lat:39.9855,lng:-105.2450},{lat:39.9865,lng:-105.2444},
+        {lat:39.9870,lng:-105.2438},{lat:39.9868,lng:-105.2436},
+        {lat:39.9862,lng:-105.2442},{lat:39.9852,lng:-105.2448},
+        {lat:39.9845,lng:-105.2458},
+      ],
+      gps_green:[
+        {lat:39.9869,lng:-105.2442},{lat:39.9869,lng:-105.2438},
+        {lat:39.9872,lng:-105.2438},{lat:39.9872,lng:-105.2442},
+      ],
+      gps_hazards:[
+        {type:"water", pts:[{lat:39.9852,lng:-105.2454},{lat:39.9852,lng:-105.2450},{lat:39.9855,lng:-105.2450},{lat:39.9855,lng:-105.2454}]},
+        {type:"trees", pts:[{lat:39.9860,lng:-105.2444},{lat:39.9860,lng:-105.2440},{lat:39.9865,lng:-105.2440},{lat:39.9865,lng:-105.2444}]},
+      ],
+    },
   ]
 };
 
@@ -178,7 +229,7 @@ function ShotMap({hole, ballPositions, cart}: {hole: Hole; ballPositions?: Recor
   const {state,dispatch}=useGame();
   const players = usePlayers();
   const canvasRef=useRef<HTMLCanvasElement>(null);
-  const [mapMode,setMapMode]=useState<"satellite"|"chart">("satellite");
+  const [mapMode,setMapMode]=useState<"satellite"|"chart"|"google">("satellite");
 
   const shotsByPlayer = Object.fromEntries(
     players.map(pk => [pk, state.shots[pk][hole.number] || []])
@@ -596,13 +647,48 @@ function ShotMap({hole, ballPositions, cart}: {hole: Hole; ballPositions?: Recor
     dispatch({type:"ADD_SHOT",pl:state.activePlayer,hn:hole.number,sh:{x,y,dist,ts:Date.now()}});
   },[hole,state.activePlayer,state.shots,dispatch]);
 
+  const googleApiKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY as string || "";
+  const hasGps = !!(hole.gps_tee && hole.gps_pin);
+
+  const googleHole: GoogleMapHole | null = hasGps ? {
+    number: hole.number,
+    par: hole.par,
+    yards: hole.yards,
+    tee: hole.gps_tee!,
+    pin: hole.gps_pin!,
+    fairway: hole.gps_fairway,
+    green: hole.gps_green,
+    hazards: hole.gps_hazards,
+  } : null;
+
   return(
     <div style={{position:"relative",width:"100%"}}>
-      <canvas ref={canvasRef} width={580} height={440} onClick={handleTap}
-        style={{width:"100%",height:440,cursor:"crosshair",borderRadius:8,border:"1px solid rgba(255,255,255,0.08)",display:"block"}}/>
+      {mapMode === "google" && googleHole && googleApiKey ? (
+        <GoogleMapView
+          apiKey={googleApiKey}
+          hole={googleHole}
+          height={440}
+          cartPosition={cart && cart.lat != null ? { lat: cart.lat, lng: cart.lng! } : null}
+        />
+      ) : mapMode === "google" && (!googleHole || !googleApiKey) ? (
+        <div style={{width:"100%",height:440,borderRadius:8,border:"1px solid rgba(255,255,255,0.08)",
+          background:"rgba(0,0,0,0.85)",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:10,padding:20}}>
+          <div style={{color:"#C8960C",fontFamily:"'IBM Plex Mono',monospace",fontSize:12,letterSpacing:1}}>
+            GOOGLE MAPS
+          </div>
+          <div style={{color:"#9CA3AF",fontSize:12,textAlign:"center",maxWidth:280}}>
+            {!googleApiKey
+              ? "Add VITE_GOOGLE_MAPS_API_KEY to your .env file to enable satellite imagery."
+              : "This course does not have GPS coordinates. Add gps_tee and gps_pin to the hole data."}
+          </div>
+        </div>
+      ) : (
+        <canvas ref={canvasRef} width={580} height={440} onClick={handleTap}
+          style={{width:"100%",height:440,cursor:"crosshair",borderRadius:8,border:"1px solid rgba(255,255,255,0.08)",display:"block"}}/>
+      )}
       <div style={{position:"absolute",bottom:8,left:8,display:"flex",background:"rgba(0,0,0,0.7)",
         border:`1px solid ${GOLD}40`,borderRadius:6,overflow:"hidden"}}>
-        {(["satellite","chart"] as const).map(m=>(
+        {(["google","satellite","chart"] as const).map(m=>(
           <button key={m} onClick={()=>setMapMode(m)}
             style={{padding:"5px 10px",border:"none",cursor:"pointer",
               background: mapMode===m ? GOLD : "transparent",

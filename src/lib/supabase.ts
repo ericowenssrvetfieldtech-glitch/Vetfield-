@@ -12,7 +12,9 @@ async function getCurrentUserId(): Promise<string | null> {
 
 // ── Courses ───────────────────────────────────────────────────────────────────
 export interface HolePoint { x: number; y: number }
+export interface GpsPoint { lat: number; lng: number }
 export interface HoleHazard { type: "water" | "bunker" | "trees"; pts: HolePoint[] }
+export interface GpsHazard { type: "water" | "bunker" | "trees"; pts: GpsPoint[] }
 export interface Hole {
   number: number;
   par: number;
@@ -22,6 +24,11 @@ export interface Hole {
   fairway: HolePoint[];
   green: HolePoint[];
   hazards?: HoleHazard[];
+  gps_tee?: GpsPoint;
+  gps_pin?: GpsPoint;
+  gps_fairway?: GpsPoint[];
+  gps_green?: GpsPoint[];
+  gps_hazards?: GpsHazard[];
 }
 export interface Course {
   id: string;
