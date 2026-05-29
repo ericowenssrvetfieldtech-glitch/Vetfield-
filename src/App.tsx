@@ -664,6 +664,7 @@ function ShotMap({hole, ballPositions, cart}: {hole: Hole; ballPositions?: Recor
     <div style={{position:"relative",width:"100%"}}>
       {mapMode === "google" && googleHole ? (
         <GoogleMapView
+          key={`${hole.number}-${googleHole.tee.lat}-${googleHole.tee.lng}`}
           hole={googleHole}
           height={440}
           cartPosition={cart && cart.lat != null ? { lat: cart.lat, lng: cart.lng! } : null}
