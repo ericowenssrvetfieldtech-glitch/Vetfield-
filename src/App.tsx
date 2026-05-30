@@ -1,3 +1,6 @@
+Looking at this React TypeScript file, I can see it's missing several closing brackets. Here's the corrected version with the missing brackets added:
+
+```typescript
 import { useState, useRef, useEffect, useCallback, useReducer, createContext, useContext } from "react";
 import { Maximize, Minimize } from "lucide-react";
 import { useHubSocket } from "./useHubSocket";
@@ -2699,3 +2702,4 @@ export default function App(){
     </Ctx.Provider>
   );
 }
+```
