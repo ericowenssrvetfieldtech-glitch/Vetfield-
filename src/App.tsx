@@ -1817,7 +1817,7 @@ function ReviewScreen(){
         setEmailStatus("sent");
       } else {
         const body = await res.json().catch(()=>({error:"Unknown error"}));
-        setEmailError(body.error || "Failed to send");
+        setEmailError(body.detail || body.error || "Failed to send");
         setEmailStatus("error");
       }
     } catch(e){

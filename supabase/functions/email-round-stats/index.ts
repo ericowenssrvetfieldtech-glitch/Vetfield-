@@ -319,8 +319,46 @@ Deno.serve(async (req: Request) => {
     return new Response(null, { status: 200, headers: corsHeaders });
   }
 
+  // GET = diagnostic check
+  if (req.method === "GET") {
+    const resendKey = Deno.env.get("RESEND_API_KEY");
+    const sgKey = Deno.env.get("SENDGRID_API_KEY");
+    const diag: Record<string, unknown> = {
+      resend_configured: !!resendKey,
+      resend_key_prefix: resendKey ? resendKey.slice(0, 8) + "..." : null,
+      sendgrid_configured: !!sgKey,
+      sendgrid_key_prefix: sgKey ? sgKey.slice(0, 8) + "..." : null,
+    };
+
+    // Validate Resend key
+    if (resendKey) {
+      try {
+        const r = await fetch("https://api.resend.com/domains", {
+          headers: { Authorization: `Bearer ${resendKey}` },
+        });
+        const body = await r.json();
+        diag.resend_status = r.status;
+        diag.resend_domains = body;
+      } catch (e) {
+        diag.resend_error = String(e);
+      }
+    }
+
+    return new Response(JSON.stringify(diag, null, 2), {
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
+
   try {
-    const payload: RoundPayload = await req.json();
+    let payload: RoundPayload;
+    try {
+      payload = await req.json();
+    } catch (parseErr) {
+      return new Response(
+        JSON.stringify({ error: "Invalid JSON body", detail: String(parseErr) }),
+        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
 
     if (!payload.email) {
       return new Response(
