@@ -1804,7 +1804,7 @@ function ReviewScreen(){
           "apikey": import.meta.env.VITE_SUPABASE_ANON_KEY,
         },
         body: JSON.stringify({
-          roundId: state.round?.id || null,
+          roundId: state.roundId || null,
           email,
           courseName: course.name,
           date: state.round?.date || new Date().toLocaleDateString(),
