@@ -11,6 +11,7 @@ import {
   supabase, fetchCourses, createRound, updateRoundState, completeRound, fetchLatestActiveRound, fetchCompletedRounds, recordShot,
 } from "./lib/supabase";
 import type { Course, RoundRow } from "./lib/supabase";
+import { SpeedInsights } from '@vercel/speed-insights/react';
 
 // ── COLORS & CONSTANTS ────────────────────────────────────────────────────────
 const NAVY = "#1B3A6B", GREEN = "#2E7D32", GOLD = "#C8960C";
@@ -2676,6 +2677,7 @@ export default function App(){
     <Ctx.Provider value={{state,dispatch}}>
       <style>{CSS}</style>
       <PersistenceBridge/>
+      <SpeedInsights />
       <div className="app">
         <button onClick={toggleFullscreen}
           style={{position:"fixed",top:10,right:10,zIndex:9999,
