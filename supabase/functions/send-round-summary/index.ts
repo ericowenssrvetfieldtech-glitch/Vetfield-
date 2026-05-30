@@ -183,41 +183,84 @@ Deno.serve(async (req: Request) => {
     }
 
     const RESEND_API_KEY = Deno.env.get("RESEND_API_KEY");
-    if (!RESEND_API_KEY) {
+    const SENDGRID_API_KEY = Deno.env.get("SENDGRID_API_KEY");
+
+    if (!RESEND_API_KEY && !SENDGRID_API_KEY) {
       return new Response(
-        JSON.stringify({ error: "Email service not configured" }),
+        JSON.stringify({ error: "No email provider configured (need RESEND_API_KEY or SENDGRID_API_KEY)" }),
         { status: 503, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
 
     const html = buildEmailHtml(payload);
+    const subject = `Round Summary - ${payload.courseName} (${payload.date})`;
+    const errors: string[] = [];
 
-    const res = await fetch("https://api.resend.com/emails", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${RESEND_API_KEY}`,
-      },
-      body: JSON.stringify({
-        from: "VetField Golf <onboarding@resend.dev>",
-        to: [payload.email],
-        subject: `Round Summary - ${payload.courseName} (${payload.date})`,
-        html,
-      }),
-    });
+    // Try Resend first
+    if (RESEND_API_KEY) {
+      try {
+        const resendRes = await fetch("https://api.resend.com/emails", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${RESEND_API_KEY}`,
+          },
+          body: JSON.stringify({
+            from: "VetField Golf <onboarding@resend.dev>",
+            to: [payload.email],
+            subject,
+            html,
+          }),
+        });
 
-    if (!res.ok) {
-      const errBody = await res.text();
-      return new Response(
-        JSON.stringify({ error: "Failed to send email", detail: errBody }),
-        { status: 502, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
+        if (resendRes.ok) {
+          const result = await resendRes.json();
+          return new Response(
+            JSON.stringify({ success: true, id: result.id, provider: "resend" }),
+            { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+          );
+        }
+        const resendErr = await resendRes.text();
+        errors.push(`Resend(${resendRes.status}): ${resendErr}`);
+      } catch (e) {
+        errors.push(`Resend error: ${String(e)}`);
+      }
     }
 
-    const result = await res.json();
-    return new Response(JSON.stringify({ success: true, id: result.id }), {
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
+    // Fallback to SendGrid
+    if (SENDGRID_API_KEY) {
+      try {
+        const sgRes = await fetch("https://api.sendgrid.com/v3/mail/send", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${SENDGRID_API_KEY}`,
+          },
+          body: JSON.stringify({
+            personalizations: [{ to: [{ email: payload.email }] }],
+            from: { email: "stats@vetfield.golf", name: "VetField Golf" },
+            subject,
+            content: [{ type: "text/html", value: html }],
+          }),
+        });
+
+        if (sgRes.ok || sgRes.status === 202) {
+          return new Response(
+            JSON.stringify({ success: true, provider: "sendgrid" }),
+            { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+          );
+        }
+        const sgErr = await sgRes.text();
+        errors.push(`SendGrid(${sgRes.status}): ${sgErr}`);
+      } catch (e) {
+        errors.push(`SendGrid error: ${String(e)}`);
+      }
+    }
+
+    return new Response(
+      JSON.stringify({ error: "Email delivery failed", detail: errors.join(" | ") }),
+      { status: 502, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+    );
   } catch (err) {
     return new Response(
       JSON.stringify({ error: "Internal error", detail: String(err) }),
