@@ -1795,7 +1795,7 @@ function ReviewScreen(){
     try {
       const { data: { session } } = await supabase.auth.getSession();
       const token = session?.access_token || import.meta.env.VITE_SUPABASE_ANON_KEY;
-      const url = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/send-round-summary`;
+      const url = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/email-round-stats`;
       const res = await fetch(url, {
         method: "POST",
         headers: {
@@ -1804,6 +1804,7 @@ function ReviewScreen(){
           "apikey": import.meta.env.VITE_SUPABASE_ANON_KEY,
         },
         body: JSON.stringify({
+          roundId: state.round?.id || null,
           email,
           courseName: course.name,
           date: state.round?.date || new Date().toLocaleDateString(),
