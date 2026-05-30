@@ -182,12 +182,14 @@ Deno.serve(async (req: Request) => {
       });
     }
 
-    const RESEND_API_KEY = Deno.env.get("RESEND_API_KEY");
-    const SENDGRID_API_KEY = Deno.env.get("SENDGRID_API_KEY");
+    const rawResendKey = Deno.env.get("RESEND_API_KEY") || "";
+    const rawSendGridKey = Deno.env.get("SENDGRID_API_KEY") || "";
+    const SENDGRID_API_KEY = rawSendGridKey.startsWith("SG.") ? rawSendGridKey : null;
+    const RESEND_API_KEY = rawResendKey.startsWith("re_") ? rawResendKey : null;
 
-    if (!RESEND_API_KEY && !SENDGRID_API_KEY) {
+    if (!SENDGRID_API_KEY && !RESEND_API_KEY) {
       return new Response(
-        JSON.stringify({ error: "No email provider configured (need RESEND_API_KEY or SENDGRID_API_KEY)" }),
+        JSON.stringify({ error: "No valid email provider key configured" }),
         { status: 503, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
@@ -196,7 +198,37 @@ Deno.serve(async (req: Request) => {
     const subject = `Round Summary - ${payload.courseName} (${payload.date})`;
     const errors: string[] = [];
 
-    // Try Resend first
+    // Try SendGrid first (primary)
+    if (SENDGRID_API_KEY) {
+      try {
+        const sgRes = await fetch("https://api.sendgrid.com/v3/mail/send", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${SENDGRID_API_KEY}`,
+          },
+          body: JSON.stringify({
+            personalizations: [{ to: [{ email: payload.email }] }],
+            from: { email: "stats@vetfield.golf", name: "VetField Golf" },
+            subject,
+            content: [{ type: "text/html", value: html }],
+          }),
+        });
+
+        if (sgRes.ok || sgRes.status === 202) {
+          return new Response(
+            JSON.stringify({ success: true, provider: "sendgrid" }),
+            { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+          );
+        }
+        const sgErr = await sgRes.text();
+        errors.push(`SendGrid(${sgRes.status}): ${sgErr}`);
+      } catch (e) {
+        errors.push(`SendGrid error: ${String(e)}`);
+      }
+    }
+
+    // Fallback to Resend
     if (RESEND_API_KEY) {
       try {
         const resendRes = await fetch("https://api.resend.com/emails", {
@@ -224,36 +256,6 @@ Deno.serve(async (req: Request) => {
         errors.push(`Resend(${resendRes.status}): ${resendErr}`);
       } catch (e) {
         errors.push(`Resend error: ${String(e)}`);
-      }
-    }
-
-    // Fallback to SendGrid
-    if (SENDGRID_API_KEY) {
-      try {
-        const sgRes = await fetch("https://api.sendgrid.com/v3/mail/send", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${SENDGRID_API_KEY}`,
-          },
-          body: JSON.stringify({
-            personalizations: [{ to: [{ email: payload.email }] }],
-            from: { email: "stats@vetfield.golf", name: "VetField Golf" },
-            subject,
-            content: [{ type: "text/html", value: html }],
-          }),
-        });
-
-        if (sgRes.ok || sgRes.status === 202) {
-          return new Response(
-            JSON.stringify({ success: true, provider: "sendgrid" }),
-            { headers: { ...corsHeaders, "Content-Type": "application/json" } }
-          );
-        }
-        const sgErr = await sgRes.text();
-        errors.push(`SendGrid(${sgRes.status}): ${sgErr}`);
-      } catch (e) {
-        errors.push(`SendGrid error: ${String(e)}`);
       }
     }
 
