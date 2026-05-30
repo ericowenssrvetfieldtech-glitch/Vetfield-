@@ -415,37 +415,7 @@ Deno.serve(async (req: Request) => {
     const subject = `Round Stats - ${payload.courseName} (${payload.date})`;
     const errors: string[] = [];
 
-    // Try SendGrid first (primary)
-    if (SENDGRID_API_KEY) {
-      try {
-        const sgRes = await fetch("https://api.sendgrid.com/v3/mail/send", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${SENDGRID_API_KEY}`,
-          },
-          body: JSON.stringify({
-            personalizations: [{ to: [{ email: payload.email }] }],
-            from: { email: "stats@vetfield.golf", name: "VetField Golf" },
-            subject,
-            content: [{ type: "text/html", value: html }],
-          }),
-        });
-
-        if (sgRes.ok || sgRes.status === 202) {
-          return new Response(
-            JSON.stringify({ success: true, provider: "sendgrid" }),
-            { headers: { ...corsHeaders, "Content-Type": "application/json" } }
-          );
-        }
-        const sgErr = await sgRes.text();
-        errors.push(`SendGrid(${sgRes.status}): ${sgErr}`);
-      } catch (e) {
-        errors.push(`SendGrid error: ${String(e)}`);
-      }
-    }
-
-    // Fallback to Resend
+    // Try Resend first (primary)
     if (RESEND_API_KEY) {
       try {
         const resendRes = await fetch("https://api.resend.com/emails", {
@@ -473,6 +443,36 @@ Deno.serve(async (req: Request) => {
         errors.push(`Resend(${resendRes.status}): ${resendErr}`);
       } catch (e) {
         errors.push(`Resend error: ${String(e)}`);
+      }
+    }
+
+    // Fallback to SendGrid
+    if (SENDGRID_API_KEY) {
+      try {
+        const sgRes = await fetch("https://api.sendgrid.com/v3/mail/send", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${SENDGRID_API_KEY}`,
+          },
+          body: JSON.stringify({
+            personalizations: [{ to: [{ email: payload.email }] }],
+            from: { email: "stats@vetfield.golf", name: "VetField Golf" },
+            subject,
+            content: [{ type: "text/html", value: html }],
+          }),
+        });
+
+        if (sgRes.ok || sgRes.status === 202) {
+          return new Response(
+            JSON.stringify({ success: true, provider: "sendgrid" }),
+            { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+          );
+        }
+        const sgErr = await sgRes.text();
+        errors.push(`SendGrid(${sgRes.status}): ${sgErr}`);
+      } catch (e) {
+        errors.push(`SendGrid error: ${String(e)}`);
       }
     }
 
