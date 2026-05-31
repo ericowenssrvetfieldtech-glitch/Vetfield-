@@ -404,7 +404,6 @@ Deno.serve(async (req: Request) => {
     const rawSendGridKey = Deno.env.get("SENDGRID_API_KEY") || "";
     const SENDGRID_API_KEY = rawSendGridKey.startsWith("SG.") ? rawSendGridKey : null;
     const RESEND_API_KEY = rawResendKey.startsWith("re_") ? rawResendKey : null;
-    const RESEND_VERIFIED_DOMAIN = Deno.env.get("RESEND_FROM_EMAIL") || "";
 
     if (!SENDGRID_API_KEY && !RESEND_API_KEY) {
       return new Response(
@@ -416,8 +415,7 @@ Deno.serve(async (req: Request) => {
     const subject = `Round Stats - ${payload.courseName} (${payload.date})`;
     const errors: string[] = [];
 
-    // Determine the "from" address: use verified domain sender if configured, else onboarding@resend.dev
-    const fromAddress = RESEND_VERIFIED_DOMAIN || "VetField Golf <onboarding@resend.dev>";
+    const fromAddress = "VetField Golf <onboarding@resend.dev>";
 
     // Try Resend first (primary)
     if (RESEND_API_KEY) {
