@@ -87,6 +87,7 @@ function ReviewScreen(){
       });
       if(res.ok){
         setEmailStatus("sent");
+        setTimeout(()=>setEmailStatus("idle"), 3000);
       } else {
         const body = await res.json().catch(()=>({error:"Unknown error"}));
         setEmailError(body.detail || body.error || "Failed to send");
@@ -245,8 +246,8 @@ function ReviewScreen(){
             </div>
           </div>
           <button onClick={handleEmailSummary}
-            disabled={emailStatus==="sending"||emailStatus==="sent"}
-            style={{padding:"9px 16px",borderRadius:8,border:"none",cursor:emailStatus==="sending"||emailStatus==="sent"?"default":"pointer",
+            disabled={emailStatus==="sending"}
+            style={{padding:"9px 16px",borderRadius:8,border:"none",cursor:emailStatus==="sending"?"default":"pointer",
               background: emailStatus==="sent" ? "rgba(76,175,80,0.15)"
                 : emailStatus==="error" ? "rgba(248,113,113,0.15)"
                 : `linear-gradient(135deg,${GOLD},#9A7200)`,
