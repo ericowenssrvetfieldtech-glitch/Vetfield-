@@ -90,7 +90,12 @@ function ReviewScreen(){
         setTimeout(()=>setEmailStatus("idle"), 3000);
       } else {
         const body = await res.json().catch(()=>({error:"Unknown error"}));
-        setEmailError(body.detail || body.error || "Failed to send");
+        const detail = body.detail || body.error || "Failed to send";
+        if(detail.includes("Verify a domain") || detail.includes("free-tier")){
+          setEmailError("Email provider requires domain verification. Contact admin to verify a sending domain at resend.com/domains.");
+        } else {
+          setEmailError(detail);
+        }
         setEmailStatus("error");
       }
     } catch(e){

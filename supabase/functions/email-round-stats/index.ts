@@ -404,6 +404,7 @@ Deno.serve(async (req: Request) => {
     const rawSendGridKey = Deno.env.get("SENDGRID_API_KEY") || "";
     const SENDGRID_API_KEY = rawSendGridKey.startsWith("SG.") ? rawSendGridKey : null;
     const RESEND_API_KEY = rawResendKey.startsWith("re_") ? rawResendKey : null;
+    const RESEND_VERIFIED_DOMAIN = Deno.env.get("RESEND_FROM_EMAIL") || "";
 
     if (!SENDGRID_API_KEY && !RESEND_API_KEY) {
       return new Response(
@@ -415,6 +416,9 @@ Deno.serve(async (req: Request) => {
     const subject = `Round Stats - ${payload.courseName} (${payload.date})`;
     const errors: string[] = [];
 
+    // Determine the "from" address: use verified domain sender if configured, else onboarding@resend.dev
+    const fromAddress = RESEND_VERIFIED_DOMAIN || "VetField Golf <onboarding@resend.dev>";
+
     // Try Resend first (primary)
     if (RESEND_API_KEY) {
       try {
@@ -425,7 +429,7 @@ Deno.serve(async (req: Request) => {
             Authorization: `Bearer ${RESEND_API_KEY}`,
           },
           body: JSON.stringify({
-            from: "VetField Golf <onboarding@resend.dev>",
+            from: fromAddress,
             to: [payload.email],
             subject,
             html,
@@ -439,8 +443,15 @@ Deno.serve(async (req: Request) => {
             { headers: { ...corsHeaders, "Content-Type": "application/json" } }
           );
         }
-        const resendErr = await resendRes.text();
-        errors.push(`Resend(${resendRes.status}): ${resendErr}`);
+
+        const resendBody = await resendRes.text();
+
+        // If 403 due to testing-mode restriction, provide a clear message
+        if (resendRes.status === 403 && resendBody.includes("only send testing emails")) {
+          errors.push("Resend free-tier: can only send to the account owner email. Verify a domain at resend.com/domains to send to all users.");
+        } else {
+          errors.push(`Resend(${resendRes.status}): ${resendBody}`);
+        }
       } catch (e) {
         errors.push(`Resend error: ${String(e)}`);
       }
