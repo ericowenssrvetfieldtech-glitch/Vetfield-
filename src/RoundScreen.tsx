@@ -1,0 +1,1225 @@
+import { useState, useRef, useEffect, useCallback } from "react";
+import { useHubSocket } from "./useHubSocket";
+import type { ShotDetectedPayload, BallPositionPayload, CartPayload } from "./useHubSocket";
+import { HubStatusDot, HubStatusBar } from "./HubStatus";
+import GlassesPanel from "./GlassesPanel";
+import { useGame, usePlayers } from "./gameStore";
+import type { ShotRecord } from "./gameStore";
+import { fetchCourses, recordShot } from "./lib/supabase";
+import type { Course } from "./lib/supabase";
+import { NAVY, GREEN, GOLD, PLAYER_KEYS, PLAYER_COLORS, CLUBS, recommendClub, getScoreName } from "./constants";
+import type { PlayerKey } from "./constants";
+
+type Hole = Course["holes"][number];
+
+// ── SHOT MAP ──────────────────────────────────────────────────────────────────
+function ShotMap({hole, ballPositions, cart}: {hole: Hole; ballPositions?: Record<string, BallPositionPayload>; cart?: CartPayload | null}){
+  const {state,dispatch}=useGame();
+  const players = usePlayers();
+  const canvasRef=useRef<HTMLCanvasElement>(null);
+  const [mapMode,setMapMode]=useState<"satellite"|"chart">("satellite");
+
+  const shotsByPlayer = Object.fromEntries(
+    players.map(pk => [pk, state.shots[pk][hole.number] || []])
+  );
+
+  const draw=useCallback(()=>{
+    const cv=canvasRef.current; if(!cv)return;
+    const ctx=cv.getContext("2d");
+    if(!ctx)return;
+    const W=cv.width,H=cv.height;
+    ctx.clearRect(0,0,W,H);
+
+    const satellite = mapMode === "satellite";
+
+    // Seeded pseudo-random for stable noise per hole
+    let seed = hole.number * 9301 + 49297;
+    const rand = () => { seed = (seed * 9301 + 49297) % 233280; return seed / 233280; };
+
+    if(satellite){
+      // Base: dark rough with mottled noise, evoking aerial imagery
+      const baseGrad = ctx.createLinearGradient(0,0,W,H);
+      baseGrad.addColorStop(0,"#2D4A1E");
+      baseGrad.addColorStop(0.5,"#1F3A14");
+      baseGrad.addColorStop(1,"#16300E");
+      ctx.fillStyle = baseGrad; ctx.fillRect(0,0,W,H);
+
+      // Mottled rough noise
+      for(let i=0;i<420;i++){
+        const x=rand()*W, y=rand()*H, r=1+rand()*3;
+        const shade = Math.floor(rand()*35);
+        ctx.fillStyle = `rgba(${30+shade},${60+shade},${20+shade},0.6)`;
+        ctx.beginPath(); ctx.arc(x,y,r,0,Math.PI*2); ctx.fill();
+      }
+      // Highlight specks
+      for(let i=0;i<120;i++){
+        const x=rand()*W, y=rand()*H;
+        ctx.fillStyle = `rgba(140,170,90,${0.05+rand()*0.08})`;
+        ctx.fillRect(x,y,1,1);
+      }
+    } else {
+      ctx.fillStyle="#1A3D0A"; ctx.fillRect(0,0,W,H);
+      ctx.strokeStyle="rgba(255,255,255,0.025)"; ctx.lineWidth=1;
+      for(let x=0;x<W;x+=24){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,H);ctx.stroke();}
+      for(let y=0;y<H;y+=24){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(W,y);ctx.stroke();}
+    }
+
+    const p=(pt:{x:number;y:number})=>({x:pt.x*W,y:pt.y*H});
+
+    const polyPath = (pts:{x:number;y:number}[])=>{
+      ctx.beginPath();
+      pts.forEach((pt,i)=>{ const cp=p(pt); i===0?ctx.moveTo(cp.x,cp.y):ctx.lineTo(cp.x,cp.y); });
+      ctx.closePath();
+    };
+
+    const hc: Record<string,{fill:string;stroke:string}> = satellite ? {
+      water:{fill:"#1B4F8C",stroke:"#0E2E5A"},
+      bunker:{fill:"#E8D59A",stroke:"#B8A060"},
+      trees:{fill:"#0F2A12",stroke:"#0A1A0A"},
+    } : {
+      water:{fill:"rgba(20,80,200,0.45)",stroke:"#1E64C8"},
+      bunker:{fill:"rgba(230,200,100,0.65)",stroke:"#C8A000"},
+      trees:{fill:"rgba(10,80,20,0.55)",stroke:"#0A6010"},
+    };
+
+    hole.hazards?.forEach(hz=>{
+      const c=hc[hz.type]; if(!c)return;
+      if(satellite && hz.type === "trees"){
+        // Soft shadow beneath canopy
+        ctx.save();
+        ctx.translate(3,4);
+        ctx.fillStyle="rgba(0,0,0,0.45)";
+        polyPath(hz.pts); ctx.fill();
+        ctx.restore();
+        // Canopy base
+        ctx.fillStyle=c.fill; polyPath(hz.pts); ctx.fill();
+        // Bumpy canopy texture
+        ctx.save(); polyPath(hz.pts); ctx.clip();
+        for(let i=0;i<260;i++){
+          const x=rand()*W, y=rand()*H;
+          const r=2+rand()*4;
+          const shade = Math.floor(rand()*40);
+          ctx.fillStyle=`rgba(${20+shade},${60+shade},${25+shade},0.75)`;
+          ctx.beginPath(); ctx.arc(x,y,r,0,Math.PI*2); ctx.fill();
+        }
+        ctx.restore();
+      } else if(satellite && hz.type === "water"){
+        // Water depth gradient
+        const cp0 = p(hz.pts[0]);
+        const wg = ctx.createRadialGradient(cp0.x,cp0.y,0,cp0.x,cp0.y,Math.max(W,H)*0.4);
+        wg.addColorStop(0,"#2E6FAE"); wg.addColorStop(1,"#0D2548");
+        ctx.fillStyle=wg; polyPath(hz.pts); ctx.fill();
+        // Specular sheen lines
+        ctx.save(); polyPath(hz.pts); ctx.clip();
+        ctx.strokeStyle="rgba(255,255,255,0.12)"; ctx.lineWidth=1;
+        for(let i=0;i<14;i++){
+          const y = rand()*H;
+          ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(W,y+rand()*3-1.5); ctx.stroke();
+        }
+        ctx.restore();
+        ctx.strokeStyle=c.stroke; ctx.lineWidth=1.5; polyPath(hz.pts); ctx.stroke();
+      } else if(satellite && hz.type === "bunker"){
+        // Sand with grain
+        ctx.fillStyle=c.fill; polyPath(hz.pts); ctx.fill();
+        ctx.save(); polyPath(hz.pts); ctx.clip();
+        for(let i=0;i<180;i++){
+          const x=rand()*W, y=rand()*H;
+          ctx.fillStyle=`rgba(${180+Math.floor(rand()*40)},${160+Math.floor(rand()*30)},${110+Math.floor(rand()*20)},0.5)`;
+          ctx.fillRect(x,y,1,1);
+        }
+        ctx.restore();
+        ctx.strokeStyle=c.stroke; ctx.lineWidth=1; polyPath(hz.pts); ctx.stroke();
+      } else {
+        ctx.fillStyle=c.fill; ctx.strokeStyle=c.stroke; ctx.lineWidth=1.5;
+        polyPath(hz.pts); ctx.fill(); ctx.stroke();
+      }
+    });
+
+    // Fairway
+    if(satellite){
+      // Drop shadow under fairway for depth
+      ctx.save();
+      ctx.shadowColor="rgba(0,0,0,0.35)";
+      ctx.shadowBlur=8; ctx.shadowOffsetY=2;
+      ctx.fillStyle="#4A7A2B";
+      polyPath(hole.fairway); ctx.fill();
+      ctx.restore();
+
+      // Mow-line striping inside fairway
+      ctx.save(); polyPath(hole.fairway); ctx.clip();
+      for(let y=0;y<H;y+=14){
+        ctx.fillStyle = (Math.floor(y/14)%2===0) ? "rgba(90,140,55,0.35)" : "rgba(60,100,35,0.35)";
+        ctx.fillRect(0,y,W,14);
+      }
+      // Fairway grain noise
+      for(let i=0;i<260;i++){
+        const x=rand()*W, y=rand()*H;
+        ctx.fillStyle=`rgba(${60+Math.floor(rand()*40)},${110+Math.floor(rand()*40)},${40+Math.floor(rand()*25)},0.4)`;
+        ctx.fillRect(x,y,1,1);
+      }
+      ctx.restore();
+
+      // Soft fairway edge (rough-to-fairway blend)
+      ctx.save();
+      ctx.strokeStyle="rgba(30,55,15,0.6)"; ctx.lineWidth=3;
+      polyPath(hole.fairway); ctx.stroke();
+      ctx.restore();
+    } else {
+      ctx.fillStyle="#2D5A1B";
+      polyPath(hole.fairway); ctx.fill();
+    }
+
+    // Green
+    if(satellite){
+      ctx.save();
+      ctx.shadowColor="rgba(0,0,0,0.4)"; ctx.shadowBlur=6; ctx.shadowOffsetY=2;
+      const gg = ctx.createRadialGradient(
+        p(hole.pin).x, p(hole.pin).y, 2,
+        p(hole.pin).x, p(hole.pin).y, Math.max(W,H)*0.18);
+      gg.addColorStop(0,"#8CC36A"); gg.addColorStop(1,"#4E8A30");
+      ctx.fillStyle=gg; polyPath(hole.green); ctx.fill();
+      ctx.restore();
+      // Fine grain
+      ctx.save(); polyPath(hole.green); ctx.clip();
+      for(let i=0;i<160;i++){
+        const x=rand()*W, y=rand()*H;
+        ctx.fillStyle=`rgba(255,255,255,${0.02+rand()*0.05})`;
+        ctx.fillRect(x,y,1,1);
+      }
+      ctx.restore();
+      ctx.strokeStyle="rgba(255,255,255,0.18)"; ctx.lineWidth=1;
+      polyPath(hole.green); ctx.stroke();
+    } else {
+      ctx.fillStyle="#388A1E";
+      polyPath(hole.green); ctx.fill();
+      ctx.strokeStyle="rgba(255,255,255,0.1)"; ctx.lineWidth=1; ctx.stroke();
+    }
+
+    const pin=p(hole.pin);
+    ctx.strokeStyle="#fff"; ctx.lineWidth=1.5;
+    ctx.beginPath(); ctx.moveTo(pin.x,pin.y+14); ctx.lineTo(pin.x,pin.y-16); ctx.stroke();
+    ctx.fillStyle="#EF4444";
+    ctx.beginPath(); ctx.moveTo(pin.x,pin.y-16); ctx.lineTo(pin.x+11,pin.y-11); ctx.lineTo(pin.x,pin.y-6); ctx.closePath(); ctx.fill();
+    ctx.fillStyle="rgba(239,68,68,0.2)"; ctx.beginPath(); ctx.arc(pin.x,pin.y,8,0,Math.PI*2); ctx.fill();
+    ctx.fillStyle="#fff"; ctx.beginPath(); ctx.arc(pin.x,pin.y,4,0,Math.PI*2); ctx.fill();
+
+    const drawTrail=(shots: ShotRecord[], col: string)=>{
+      if(!shots.length)return;
+      for(let i=0;i<shots.length-1;i++){
+        const a=p(shots[i]),b=p(shots[i+1]);
+        const mx=(a.x+b.x)/2,my=(a.y+b.y)/2-22;
+        ctx.strokeStyle=col; ctx.lineWidth=2; ctx.setLineDash([5,4]);
+        ctx.beginPath(); ctx.moveTo(a.x,a.y); ctx.quadraticCurveTo(mx,my,b.x,b.y); ctx.stroke(); ctx.setLineDash([]);
+        const t=0.6;
+        const ax=(1-t)**2*a.x+2*(1-t)*t*mx+t*t*b.x;
+        const ay=(1-t)**2*a.y+2*(1-t)*t*my+t*t*b.y;
+        const dx=2*(1-t)*(mx-a.x)+2*t*(b.x-mx);
+        const dy=2*(1-t)*(my-a.y)+2*t*(b.y-my);
+        const ang=Math.atan2(dy,dx);
+        ctx.fillStyle=col;
+        ctx.beginPath(); ctx.moveTo(ax+Math.cos(ang)*6,ay+Math.sin(ang)*6);
+        ctx.lineTo(ax+Math.cos(ang+2.5)*4,ay+Math.sin(ang+2.5)*4);
+        ctx.lineTo(ax+Math.cos(ang-2.5)*4,ay+Math.sin(ang-2.5)*4);
+        ctx.closePath(); ctx.fill();
+      }
+      shots.forEach((sh,idx)=>{
+        const c=p(sh);
+        const g=ctx.createRadialGradient(c.x,c.y,0,c.x,c.y,14);
+        g.addColorStop(0,col+"50"); g.addColorStop(1,"transparent");
+        ctx.fillStyle=g; ctx.beginPath(); ctx.arc(c.x,c.y,14,0,Math.PI*2); ctx.fill();
+        ctx.fillStyle=col; ctx.strokeStyle="#000"; ctx.lineWidth=1.5;
+        ctx.beginPath(); ctx.arc(c.x,c.y,7,0,Math.PI*2); ctx.fill(); ctx.stroke();
+        ctx.fillStyle="#000"; ctx.font="bold 8px monospace"; ctx.textAlign="center";
+        ctx.fillText(String(idx+1),c.x,c.y+3); ctx.textAlign="left";
+        if(sh.dist){
+          ctx.fillStyle="rgba(0,0,0,0.75)";
+          ctx.fillRect(c.x+10,c.y-10,34,13);
+          ctx.fillStyle=col; ctx.font="9px monospace";
+          ctx.fillText(`${sh.dist}y`,c.x+13,c.y);
+        }
+      });
+    };
+
+    players.forEach(pk => drawTrail(shotsByPlayer[pk] || [], PLAYER_COLORS[pk]));
+
+    // Cart marker (with heading arrow + UWB ranging beams)
+    let cartCanvas: {x:number;y:number} | null = null;
+    if(cart && cart.canvasX!=null && cart.canvasY!=null){
+      cartCanvas = p({x: cart.canvasX, y: cart.canvasY});
+      const heading = cart.headingDeg ?? 0;
+      const ang = (heading - 90) * Math.PI / 180;  // canvas: 0deg = +x → rotate
+
+      // UWB ranging beams from cart to each ball
+      if(ballPositions){
+        for(const [,bp] of Object.entries(ballPositions)){
+          const c=p(bp);
+          ctx.strokeStyle="rgba(200,150,12,0.35)";
+          ctx.lineWidth=1; ctx.setLineDash([3,3]);
+          ctx.beginPath(); ctx.moveTo(cartCanvas.x,cartCanvas.y); ctx.lineTo(c.x,c.y); ctx.stroke();
+          ctx.setLineDash([]);
+        }
+      }
+
+      // Cart range halo (UWB coverage radius ~30m)
+      const haloR = 30 / 150 * Math.min(W, H);
+      const haloG = ctx.createRadialGradient(cartCanvas.x,cartCanvas.y,0,cartCanvas.x,cartCanvas.y,haloR);
+      haloG.addColorStop(0,"rgba(200,150,12,0.10)"); haloG.addColorStop(1,"transparent");
+      ctx.fillStyle=haloG; ctx.beginPath(); ctx.arc(cartCanvas.x,cartCanvas.y,haloR,0,Math.PI*2); ctx.fill();
+
+      // Cart body
+      ctx.save();
+      ctx.translate(cartCanvas.x,cartCanvas.y);
+      ctx.rotate(ang);
+      ctx.fillStyle="#0F2444";
+      ctx.strokeStyle=GOLD; ctx.lineWidth=2;
+      ctx.beginPath();
+      if(ctx.roundRect) ctx.roundRect(-9,-13,18,26,3); else ctx.rect(-9,-13,18,26);
+      ctx.fill(); ctx.stroke();
+      // Heading arrow
+      ctx.fillStyle=GOLD;
+      ctx.beginPath(); ctx.moveTo(0,-16); ctx.lineTo(6,-9); ctx.lineTo(-6,-9); ctx.closePath(); ctx.fill();
+      // Antenna dots (4 corners)
+      ctx.fillStyle="#fff";
+      [[-7,-10],[7,-10],[-7,10],[7,10]].forEach(([x,y])=>{
+        ctx.beginPath(); ctx.arc(x,y,1.8,0,Math.PI*2); ctx.fill();
+      });
+      ctx.restore();
+
+      // Cart label
+      ctx.fillStyle="rgba(0,0,0,0.7)";
+      ctx.fillRect(cartCanvas.x+12,cartCanvas.y-8,38,14);
+      ctx.fillStyle=GOLD; ctx.font="bold 9px 'IBM Plex Mono',monospace"; ctx.textAlign="left";
+      ctx.fillText("CART",cartCanvas.x+15,cartCanvas.y+2);
+    }
+
+    // Live UWB ball positions — pulsing dots on the map
+    if(ballPositions){
+      const ballToPlayer: Record<string, PlayerKey> = {ball1:"p1",ball2:"p2",ball3:"p3",ball4:"p4"};
+      const now=Date.now();
+      for(const [id,bp] of Object.entries(ballPositions)){
+        const pk = ballToPlayer[id] as PlayerKey | undefined;
+        const col = pk ? PLAYER_COLORS[pk] : "#FBBF24";
+        const c=p(bp);
+        const pulse=0.5+0.5*Math.sin((now%1200)/1200*Math.PI*2);
+        const r=8+pulse*6;
+        const g=ctx.createRadialGradient(c.x,c.y,0,c.x,c.y,r+8);
+        g.addColorStop(0,col+"90"); g.addColorStop(0.6,col+"30"); g.addColorStop(1,"transparent");
+        ctx.fillStyle=g; ctx.beginPath(); ctx.arc(c.x,c.y,r+8,0,Math.PI*2); ctx.fill();
+        ctx.fillStyle=col; ctx.strokeStyle="#fff"; ctx.lineWidth=2;
+        ctx.beginPath(); ctx.arc(c.x,c.y,6,0,Math.PI*2); ctx.fill(); ctx.stroke();
+        ctx.fillStyle="#000"; ctx.font="bold 7px monospace"; ctx.textAlign="center";
+        ctx.fillText(id.replace("ball","B"),c.x,c.y+2.5); ctx.textAlign="left";
+      }
+    }
+
+    // Tornado whirlwind when ball is in the cup
+    const pinThreshold = 0.03; // normalized distance threshold to consider "holed"
+    let holedPlayer: PlayerKey | null = null;
+    for(const pk of players){
+      const shots = shotsByPlayer[pk] || [];
+      if(shots.length > 0){
+        const last = shots[shots.length - 1];
+        const dx = last.x - hole.pin.x;
+        const dy = last.y - hole.pin.y;
+        if(Math.sqrt(dx*dx + dy*dy) < pinThreshold){
+          holedPlayer = pk;
+          break;
+        }
+      }
+    }
+
+    if(holedPlayer){
+      const now = Date.now();
+      const t = (now % 2000) / 2000;
+      const px = pin.x, py = pin.y;
+
+      // Outer glow pulse
+      const glowR = 35 + Math.sin(t * Math.PI * 2) * 8;
+      const glowG = ctx.createRadialGradient(px, py, 0, px, py, glowR);
+      glowG.addColorStop(0, "rgba(251,146,60,0.4)");
+      glowG.addColorStop(0.5, "rgba(251,146,60,0.15)");
+      glowG.addColorStop(1, "transparent");
+      ctx.fillStyle = glowG;
+      ctx.beginPath(); ctx.arc(px, py, glowR, 0, Math.PI * 2); ctx.fill();
+
+      // Spinning spiral arms (tornado vortex)
+      for(let arm = 0; arm < 5; arm++){
+        const baseAngle = t * Math.PI * 2 + (arm / 5) * Math.PI * 2;
+        ctx.save();
+        ctx.globalAlpha = 0.7 - arm * 0.08;
+        ctx.strokeStyle = arm % 2 === 0 ? "#FB923C" : "#FDBA74";
+        ctx.lineWidth = 2.5 - arm * 0.3;
+        ctx.beginPath();
+        for(let s = 0; s < 40; s++){
+          const frac = s / 40;
+          const r = 4 + frac * 28;
+          const angle = baseAngle + frac * Math.PI * 3;
+          const x = px + Math.cos(angle) * r;
+          const y = py + Math.sin(angle) * r * 0.7 - frac * 12;
+          if(s === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+        }
+        ctx.stroke();
+        ctx.restore();
+      }
+
+      // Particles swirling outward
+      for(let i = 0; i < 12; i++){
+        const particleT = (t + i / 12) % 1;
+        const angle = particleT * Math.PI * 4 + i * 1.3;
+        const r = 6 + particleT * 26;
+        const x = px + Math.cos(angle) * r;
+        const y = py + Math.sin(angle) * r * 0.6 - particleT * 18;
+        const size = 1.5 + (1 - particleT) * 2;
+        const alpha = 1 - particleT;
+        ctx.fillStyle = `rgba(251,146,60,${alpha})`;
+        ctx.beginPath(); ctx.arc(x, y, size, 0, Math.PI * 2); ctx.fill();
+      }
+
+      // Center "IN THE CUP" burst
+      ctx.save();
+      ctx.fillStyle = "#FB923C";
+      ctx.font = "bold 10px 'IBM Plex Mono',monospace";
+      ctx.textAlign = "center";
+      const labelY = py + 32 + Math.sin(t * Math.PI * 4) * 2;
+      ctx.shadowColor = "#FB923C"; ctx.shadowBlur = 8;
+      ctx.fillText("IN THE CUP!", px, labelY);
+      ctx.restore();
+      ctx.textAlign = "left";
+    }
+
+    const tee=p(hole.tee);
+    ctx.fillStyle="#fff"; ctx.strokeStyle=NAVY; ctx.lineWidth=2;
+    ctx.beginPath(); ctx.arc(tee.x,tee.y,8,0,Math.PI*2); ctx.fill(); ctx.stroke();
+    ctx.fillStyle=NAVY; ctx.font="bold 8px monospace"; ctx.textAlign="center";
+    ctx.fillText("T",tee.x,tee.y+3); ctx.textAlign="left";
+
+    ctx.fillStyle="rgba(0,0,0,0.7)";
+    ctx.beginPath();
+    if(ctx.roundRect) ctx.roundRect(8,8,90,46,6);
+    ctx.fill();
+    ctx.fillStyle=GOLD; ctx.font="bold 10px 'IBM Plex Mono',monospace";
+    ctx.fillText(`HOLE ${hole.number}`,14,26);
+    ctx.fillStyle="#fff"; ctx.font="bold 9px 'IBM Plex Mono',monospace";
+    ctx.fillText(`PAR ${hole.par}  •  ${hole.yards}Y`,14,42);
+
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[hole, JSON.stringify(shotsByPlayer), ballPositions, cart, players, mapMode]);
+
+  useEffect(()=>{draw();},[draw]);
+
+  useEffect(()=>{
+    const hasHoled = players.some(pk=>{
+      const shots = shotsByPlayer[pk] || [];
+      if(shots.length === 0) return false;
+      const last = shots[shots.length - 1];
+      const dx = last.x - hole.pin.x, dy = last.y - hole.pin.y;
+      return Math.sqrt(dx*dx + dy*dy) < 0.03;
+    });
+    const hasLive = (ballPositions && Object.keys(ballPositions).length>0) || cart || hasHoled;
+    if(!hasLive) return;
+    let raf: number;
+    const loop=()=>{ draw(); raf=requestAnimationFrame(loop); };
+    raf=requestAnimationFrame(loop);
+    return ()=>cancelAnimationFrame(raf);
+  },[ballPositions,cart,draw,players,shotsByPlayer,hole.pin.x,hole.pin.y]);
+
+  const handleTap=useCallback((e: React.MouseEvent<HTMLCanvasElement>)=>{
+    const cv=canvasRef.current; if(!cv)return;
+    const r=cv.getBoundingClientRect();
+    const x=((e.clientX-r.left)/r.width);
+    const y=((e.clientY-r.top)/r.height);
+    const shots=state.shots[state.activePlayer][hole.number]||[];
+    const prev=shots.length>0?shots[shots.length-1]:hole.tee;
+    const dx=(x-prev.x)*hole.yards, dy=(y-prev.y)*hole.yards;
+    const dist=Math.round(Math.sqrt(dx*dx+dy*dy));
+    dispatch({type:"ADD_SHOT",pl:state.activePlayer,hn:hole.number,sh:{x,y,dist,ts:Date.now()}});
+  },[hole,state.activePlayer,state.shots,dispatch]);
+
+  return(
+    <div style={{position:"relative",width:"100%"}}>
+      <canvas ref={canvasRef} width={580} height={440} onClick={handleTap}
+        style={{width:"100%",height:440,cursor:"crosshair",borderRadius:8,border:"1px solid rgba(255,255,255,0.08)",display:"block"}}/>
+      <div style={{position:"absolute",bottom:8,left:8,display:"flex",background:"rgba(0,0,0,0.7)",
+        border:`1px solid ${GOLD}40`,borderRadius:6,overflow:"hidden"}}>
+        {(["satellite","chart"] as const).map(m=>(
+          <button key={m} onClick={()=>setMapMode(m)}
+            style={{padding:"5px 10px",border:"none",cursor:"pointer",
+              background: mapMode===m ? GOLD : "transparent",
+              color: mapMode===m ? "#000" : "#fff",
+              fontFamily:"'IBM Plex Mono',monospace",fontSize:10,letterSpacing:1,fontWeight:700}}>
+            {m.toUpperCase()}
+          </button>
+        ))}
+      </div>
+      {cart && cart.lat!=null && (
+        <div style={{position:"absolute",bottom:44,left:8,background:"rgba(0,0,0,0.7)",
+          borderRadius:6,padding:"6px 10px",border:`1px solid ${GOLD}40`,
+          fontFamily:"'IBM Plex Mono',monospace",fontSize:9,color:"#fff",lineHeight:1.5}}>
+          <div style={{color:GOLD,fontWeight:700,letterSpacing:1}}>CART TELEMETRY</div>
+          <div>HDG {cart.headingDeg!=null?Math.round(cart.headingDeg):"—"}°</div>
+          <div>SPD {(cart.speedMps*2.237).toFixed(1)} mph</div>
+          <div style={{color:"#9CA3AF"}}>{cart.lat.toFixed(5)}, {cart.lng?.toFixed(5)}</div>
+        </div>
+      )}
+      <div style={{position:"absolute",top:8,right:8,display:"flex",gap:6,flexWrap:"wrap",justifyContent:"flex-end",zIndex:1000}}>
+        {players.map(pk=>(
+          <div key={pk} style={{display:"flex",alignItems:"center",gap:5,background:"rgba(0,0,0,0.65)",borderRadius:4,padding:"3px 8px"}}>
+            <div style={{width:8,height:8,borderRadius:"50%",background:PLAYER_COLORS[pk]}}/>
+            <span style={{color:"#fff",fontSize:10,fontFamily:"'IBM Plex Mono',monospace"}}>
+              {state.round?.players[PLAYER_KEYS.indexOf(pk)]||pk.toUpperCase()}
+            </span>
+          </div>
+        ))}
+      </div></div>
+  );
+}
+
+// ── CLUB PANEL ────────────────────────────────────────────────────────────────
+function ClubPanel({hole: _hole, autoYards}: {hole: Hole; autoYards: number | null}){
+  void _hole;
+  const {state,dispatch}=useGame();
+  const [yards,setYards]=useState("");
+  const [manual,setManual]=useState(false);
+  const wind=state.wind;
+  const windAdj=["N","NE","NW"].includes(wind.dir)?wind.mph:-Math.round(wind.mph*0.7);
+  const effectiveYards = manual ? +yards : (autoYards ?? +yards);
+  const rec=effectiveYards>0?recommendClub(effectiveYards,windAdj):null;
+  const DIRS=["N","NE","E","SE","S","SW","W","NW"];
+
+  return(
+    <div style={{display:"flex",flexDirection:"column",gap:10,height:"100%",overflowY:"auto"}}>
+      <div style={{background:"rgba(255,255,255,0.05)",borderRadius:8,padding:"10px 12px"}}>
+        <div style={{color:"#93C5FD",fontFamily:"'IBM Plex Mono',monospace",fontSize:10,letterSpacing:1,marginBottom:8}}>WIND</div>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8,marginBottom:8}}>
+          <div style={{display:"flex",flexWrap:"wrap",gap:4,flex:1}}>
+            {DIRS.map(d=>(
+              <button key={d} onClick={()=>dispatch({type:"WIND",w:{...wind,dir:d}})}
+                style={{padding:"4px 7px",borderRadius:3,border:"none",fontSize:9,fontFamily:"'IBM Plex Mono',monospace",cursor:"pointer",
+                  background:wind.dir===d?NAVY:"rgba(255,255,255,0.08)",color:wind.dir===d?"#fff":"#9CA3AF"}}>{d}</button>
+            ))}
+          </div>
+          <div style={{textAlign:"center",flexShrink:0}}>
+            <WindArrow dir={wind.dir} mph={wind.mph}/>
+          </div>
+        </div>
+        <input type="range" min={0} max={25} value={wind.mph}
+          onChange={e=>dispatch({type:"WIND",w:{...wind,mph:+e.target.value}})}
+          style={{width:"100%",accentColor:"#60A5FA"}}/>
+        <div style={{display:"flex",justifyContent:"space-between",color:"#9CA3AF",fontSize:9,fontFamily:"'IBM Plex Mono',monospace",marginTop:3}}>
+          <span>0</span><span style={{color:"#fff",fontWeight:700}}>{wind.mph} MPH {wind.dir}</span><span>25</span>
+        </div>
+      </div>
+
+      <div style={{background:"rgba(255,255,255,0.05)",borderRadius:8,padding:"10px 12px"}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+          <div style={{color:"#93C5FD",fontFamily:"'IBM Plex Mono',monospace",fontSize:10,letterSpacing:1}}>DISTANCE TO PIN</div>
+          {autoYards!=null && (
+            <div style={{display:"flex",alignItems:"center",gap:4,fontFamily:"'IBM Plex Mono',monospace",fontSize:9,color: manual ? "#9CA3AF" : GOLD}}>
+              <span style={{width:6,height:6,borderRadius:"50%",background: manual ? "#9CA3AF" : GOLD,boxShadow: manual ? "none" : `0 0 6px ${GOLD}`}}/>
+              UWB LIVE
+            </div>
+          )}
+        </div>
+        {autoYards!=null && !manual ? (
+          <div style={{display:"flex",gap:8,alignItems:"baseline",marginBottom:8}}>
+            <div style={{flex:1,padding:"9px 10px",borderRadius:6,background:`linear-gradient(135deg,${GOLD}15,${GOLD}05)`,
+              border:`1px solid ${GOLD}55`,color:"#fff",fontSize:24,fontWeight:700,fontFamily:"'IBM Plex Mono',monospace"}}>
+              {autoYards}
+            </div>
+            <span style={{color:GOLD,fontSize:12,fontFamily:"'IBM Plex Mono',monospace"}}>yds</span>
+            <button onClick={()=>{setManual(true);setYards(String(autoYards));}}
+              style={{padding:"6px 9px",borderRadius:4,border:"1px solid rgba(255,255,255,0.2)",background:"rgba(255,255,255,0.06)",
+                color:"#D1D5DB",fontSize:9,fontFamily:"'IBM Plex Mono',monospace",cursor:"pointer",letterSpacing:0.5}}>OVERRIDE</button>
+          </div>
+        ) : (
+          <div style={{display:"flex",gap:8,alignItems:"center",marginBottom:8}}>
+            <input type="number" value={yards} onChange={e=>setYards(e.target.value)} placeholder="Yards..."
+              style={{flex:1,padding:"9px 10px",borderRadius:6,background:"rgba(255,255,255,0.1)",
+                border:"1px solid rgba(255,255,255,0.2)",color:"#fff",fontSize:20,fontFamily:"'IBM Plex Mono',monospace",outline:"none"}}/>
+            <span style={{color:"#9CA3AF",fontSize:12,fontFamily:"'IBM Plex Mono',monospace"}}>yds</span>
+            {autoYards!=null && manual && (
+              <button onClick={()=>{setManual(false);setYards("");}}
+                style={{padding:"6px 9px",borderRadius:4,border:"none",background:GOLD,color:"#000",
+                  fontSize:9,fontWeight:700,fontFamily:"'IBM Plex Mono',monospace",cursor:"pointer",letterSpacing:0.5}}>USE UWB</button>
+            )}
+          </div>
+        )}
+        <div style={{display:"flex",flexWrap:"wrap",gap:5}}>
+          {[50,75,100,125,150,175,200,225].map(y=>(
+            <button key={y} onClick={()=>setYards(String(y))}
+              style={{padding:"4px 9px",borderRadius:4,border:"none",cursor:"pointer",fontFamily:"'IBM Plex Mono',monospace",fontSize:10,
+                background:yards==String(y)?GREEN:"rgba(255,255,255,0.08)",color:yards==String(y)?"#fff":"#D1D5DB"}}>{y}</button>
+          ))}
+        </div>
+      </div>
+
+      {rec&&(
+        <div style={{background:`linear-gradient(135deg,${NAVY}ee 0%,#0F2444 100%)`,borderRadius:8,padding:"12px 14px",border:`1px solid ${GOLD}55`}}>
+          <div style={{color:GOLD,fontFamily:"'IBM Plex Mono',monospace",fontSize:10,letterSpacing:1,marginBottom:8}}>RECOMMENDED</div>
+          <div style={{display:"flex",alignItems:"center",gap:12}}>
+            <div style={{width:60,height:60,borderRadius:8,background:rec.color,display:"flex",alignItems:"center",justifyContent:"center",
+              fontWeight:700,fontSize:18,color:"#fff",boxShadow:`0 0 18px ${rec.color}70`,fontFamily:"'IBM Plex Mono',monospace"}}>{rec.abbr}</div>
+            <div>
+              <div style={{color:"#fff",fontWeight:700,fontSize:22}}>{rec.name}</div>
+              <div style={{color:"#9CA3AF",fontSize:12,fontFamily:"'IBM Plex Mono',monospace",marginTop:2}}>Avg: {rec.avg}y</div>
+              {windAdj!==0&&<div style={{color:windAdj>0?"#F87171":"#34D399",fontSize:10,fontFamily:"'IBM Plex Mono',monospace",marginTop:2}}>
+                {windAdj>0?"↑ into":"↓ down"} wind: {Math.abs(windAdj)}y adj
+              </div>}
+            </div>
+          </div>
+        </div>
+      )}
+
+      <div>
+        <div style={{color:"#93C5FD",fontFamily:"'IBM Plex Mono',monospace",fontSize:10,letterSpacing:1,marginBottom:8}}>ALL CLUBS</div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:4}}>
+          {CLUBS.map(cl=>(
+            <div key={cl.abbr} style={{display:"flex",alignItems:"center",gap:7,padding:"6px 9px",borderRadius:5,cursor:"pointer",
+              background:rec?.abbr===cl.abbr?`${cl.color}30`:"rgba(255,255,255,0.04)",
+              outline:rec?.abbr===cl.abbr?`1px solid ${cl.color}`:"none"}}>
+              <div style={{width:26,height:26,borderRadius:4,background:cl.color,display:"flex",alignItems:"center",justifyContent:"center",
+                fontFamily:"'IBM Plex Mono',monospace",fontWeight:700,fontSize:9,color:"#fff",flexShrink:0}}>{cl.abbr}</div>
+              <div>
+                <div style={{color:"#fff",fontSize:11}}>{cl.name}</div>
+                <div style={{color:"#9CA3AF",fontSize:9,fontFamily:"'IBM Plex Mono',monospace"}}>
+                  {cl.abbr==="PT" ? "Green" : `${cl.avg}y`}
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── GAPP PANEL ────────────────────────────────────────────────────────────────
+function GAPPPanel(){
+  const [expanded,setExpanded]=useState<string|null>(null);
+
+  const sections: {id:string;title:string;icon:string;color:string;tips:string[];detail:string}[] = [
+    {
+      id:"grip", title:"Grip", icon:"G", color:"#60A5FA",
+      tips:[
+        "Neutral grip: V's of both hands point to trail shoulder",
+        "Light pressure (4/10) for feel; firm with trail hand pinkie overlap",
+        "Lead hand: last 3 fingers secure the club",
+        "Check: club runs from base of pinkie to mid-index finger"
+      ],
+      detail:"The grip is the only connection between you and the club. A neutral grip returns the face square at impact. Too strong (V's past trail shoulder) closes the face; too weak opens it."
+    },
+    {
+      id:"aim", title:"Aim", icon:"A", color:"#34D399",
+      tips:[
+        "Clubface aims at the target FIRST, then align body",
+        "Feet, hips, and shoulders parallel-left of target line",
+        "Pick an intermediate spot 2-3 feet ahead on the target line",
+        "Check alignment by laying a club across your toes"
+      ],
+      detail:"80% of directional misses start with misalignment. The face angle at impact determines 75-85% of the ball's starting direction. Body alignment influences the swing path."
+    },
+    {
+      id:"posture", title:"Posture", icon:"P", color:"#FB923C",
+      tips:[
+        "Bend from the hips, not the waist — maintain spine angle",
+        "Slight knee flex, weight on balls of feet",
+        "Arms hang naturally below shoulders",
+        "Chin up off chest to allow shoulder turn"
+      ],
+      detail:"Good posture allows the arms to swing freely and the body to rotate. A hunched back restricts rotation and leads to compensations. Maintain your spine angle through impact."
+    },
+    {
+      id:"position", title:"Position", icon:"P", color:"#F472B6",
+      tips:[
+        "Driver: ball off lead heel, widest stance",
+        "Irons: ball center to one ball forward of center",
+        "Wedges: center of stance, narrower width",
+        "Weight: 50/50 for irons, 55% trail side for driver"
+      ],
+      detail:"Ball position controls the low point of the arc. Too far forward = thin/topped. Too far back = fat/heavy. Stance width determines your base of support and rotation capacity."
+    },
+  ];
+
+  const facePathInfo = {
+    title: "Club Face & Path",
+    items: [
+      { label:"Face Closed + In-to-Out", result:"Draw / Hook", color:"#34D399" },
+      { label:"Face Open + Out-to-In", result:"Fade / Slice", color:"#60A5FA" },
+      { label:"Face Square + On Path", result:"Straight", color:"#C8960C" },
+      { label:"Face Open + In-to-Out", result:"Push / Push-Fade", color:"#FB923C" },
+      { label:"Face Closed + Out-to-In", result:"Pull / Pull-Hook", color:"#F472B6" },
+    ],
+    principles: [
+      "Club face at impact determines ~75% of initial ball direction",
+      "Path relative to face determines spin axis (curve)",
+      "Leading edge perpendicular to face angle, not the path",
+      "Attack angle affects launch and spin: negative = descending blow"
+    ]
+  };
+
+  return(
+    <div style={{display:"flex",flexDirection:"column",gap:12,overflowY:"auto"}}>
+      {/* GAPP Header */}
+      <div style={{background:"linear-gradient(135deg,#0F2444 0%,#1B3A6B 100%)",borderRadius:10,padding:"14px 16px",
+        border:`1px solid ${GOLD}40`}}>
+        <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:8}}>
+          <div style={{display:"flex",gap:3}}>
+            {sections.map(s=>(
+              <div key={s.id} style={{width:28,height:28,borderRadius:6,background:s.color,display:"flex",alignItems:"center",justifyContent:"center",
+                fontFamily:"'IBM Plex Mono',monospace",fontWeight:700,fontSize:13,color:"#fff"}}>{s.icon}</div>
+            ))}
+          </div>
+          <div>
+            <div style={{color:"#fff",fontFamily:"'Rajdhani',sans-serif",fontWeight:700,fontSize:18}}>Pre-Shot Checklist</div>
+            <div style={{color:"#9CA3AF",fontFamily:"'IBM Plex Mono',monospace",fontSize:9}}>Grip - Aim - Posture - Position</div>
+          </div>
+        </div>
+      </div>
+
+      {/* GAPP Sections */}
+      {sections.map(s=>{
+        const isOpen=expanded===s.id;
+        return(
+          <div key={s.id} style={{background:"rgba(255,255,255,0.04)",borderRadius:8,border:`1px solid ${isOpen?s.color+"60":"rgba(255,255,255,0.08)"}`,
+            overflow:"hidden",transition:"border-color 0.2s"}}>
+            <button onClick={()=>setExpanded(isOpen?null:s.id)}
+              style={{width:"100%",display:"flex",alignItems:"center",gap:10,padding:"11px 14px",border:"none",background:"transparent",cursor:"pointer",textAlign:"left"}}>
+              <div style={{width:32,height:32,borderRadius:7,background:`${s.color}20`,border:`1px solid ${s.color}60`,
+                display:"flex",alignItems:"center",justifyContent:"center",
+                fontFamily:"'IBM Plex Mono',monospace",fontWeight:700,fontSize:14,color:s.color,flexShrink:0}}>{s.icon}</div>
+              <div style={{flex:1}}>
+                <div style={{color:"#fff",fontWeight:600,fontSize:15,fontFamily:"'Rajdhani',sans-serif"}}>{s.title}</div>
+                <div style={{color:"#9CA3AF",fontSize:10,fontFamily:"'IBM Plex Mono',monospace",marginTop:1}}>{s.tips[0]}</div>
+              </div>
+              <div style={{color:s.color,fontSize:16,transform:isOpen?"rotate(180deg)":"rotate(0deg)",transition:"transform 0.2s"}}>▼</div>
+            </button>
+            {isOpen && (
+              <div style={{padding:"0 14px 14px",borderTop:`1px solid ${s.color}20`}}>
+                <div style={{padding:"10px 0",display:"flex",flexDirection:"column",gap:6}}>
+                  {s.tips.map((tip,i)=>(
+                    <div key={i} style={{display:"flex",gap:8,alignItems:"flex-start"}}>
+                      <div style={{width:18,height:18,borderRadius:4,background:`${s.color}15`,border:`1px solid ${s.color}40`,
+                        display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,
+                        fontFamily:"'IBM Plex Mono',monospace",fontSize:9,color:s.color,fontWeight:700}}>{i+1}</div>
+                      <div style={{color:"#D1D5DB",fontSize:12,lineHeight:1.4}}>{tip}</div>
+                    </div>
+                  ))}
+                </div>
+                <div style={{background:`${s.color}08`,borderRadius:6,padding:"8px 10px",border:`1px solid ${s.color}20`,marginTop:4}}>
+                  <div style={{color:"#9CA3AF",fontSize:10,fontFamily:"'IBM Plex Mono',monospace",letterSpacing:0.5,marginBottom:4}}>WHY IT MATTERS</div>
+                  <div style={{color:"#E5E7EB",fontSize:11,lineHeight:1.5}}>{s.detail}</div>
+                </div>
+              </div>
+            )}
+          </div>
+        );
+      })}
+
+      {/* Club Face & Path */}
+      <div style={{background:"rgba(255,255,255,0.04)",borderRadius:8,border:"1px solid rgba(255,255,255,0.08)",overflow:"hidden"}}>
+        <div style={{padding:"12px 14px",borderBottom:"1px solid rgba(255,255,255,0.06)"}}>
+          <div style={{color:GOLD,fontFamily:"'IBM Plex Mono',monospace",fontSize:10,letterSpacing:1,marginBottom:4}}>CLUB FACE & PATH</div>
+          <div style={{color:"#D1D5DB",fontSize:11,lineHeight:1.4}}>
+            The face angle determines where the ball starts. The path relative to the face determines curve.
+          </div>
+        </div>
+
+        {/* Visual diagram */}
+        <div style={{padding:"12px 14px",display:"flex",flexDirection:"column",gap:8}}>
+          <div style={{position:"relative",height:100,background:"rgba(0,0,0,0.3)",borderRadius:8,overflow:"hidden",
+            display:"flex",alignItems:"center",justifyContent:"center"}}>
+            {/* Target line */}
+            <div style={{position:"absolute",top:"50%",left:0,right:0,height:1,background:"rgba(255,255,255,0.15)"}}/>
+            <div style={{position:"absolute",top:"50%",right:12,transform:"translateY(-50%)",color:"#9CA3AF",fontSize:8,fontFamily:"'IBM Plex Mono',monospace"}}>TARGET</div>
+            {/* Club face representation */}
+            <div style={{width:40,height:6,background:GOLD,borderRadius:2,position:"relative"}}>
+              <div style={{position:"absolute",top:-14,left:"50%",transform:"translateX(-50%)",color:GOLD,fontSize:8,fontFamily:"'IBM Plex Mono',monospace",whiteSpace:"nowrap"}}>FACE</div>
+              <div style={{position:"absolute",bottom:-14,left:"50%",transform:"translateX(-50%)",color:"#9CA3AF",fontSize:7,fontFamily:"'IBM Plex Mono',monospace",whiteSpace:"nowrap"}}>LEADING EDGE</div>
+            </div>
+            {/* Path arrow */}
+            <div style={{position:"absolute",top:"30%",left:"20%",width:"60%",height:1,background:"#60A5FA80",transform:"rotate(-5deg)"}}>
+              <div style={{position:"absolute",right:-2,top:-4,color:"#60A5FA",fontSize:10}}>→</div>
+            </div>
+            <div style={{position:"absolute",top:"22%",left:"22%",color:"#60A5FA",fontSize:8,fontFamily:"'IBM Plex Mono',monospace"}}>PATH</div>
+          </div>
+
+          {/* Combination results */}
+          <div style={{display:"flex",flexDirection:"column",gap:4}}>
+            {facePathInfo.items.map((item,i)=>(
+              <div key={i} style={{display:"flex",alignItems:"center",justifyContent:"space-between",
+                padding:"6px 10px",borderRadius:5,background:"rgba(0,0,0,0.2)"}}>
+                <div style={{color:"#D1D5DB",fontSize:10,fontFamily:"'IBM Plex Mono',monospace"}}>{item.label}</div>
+                <div style={{color:item.color,fontSize:10,fontWeight:700,fontFamily:"'IBM Plex Mono',monospace"}}>{item.result}</div>
+              </div>
+            ))}
+          </div>
+
+          {/* Principles */}
+          <div style={{marginTop:4}}>
+            <div style={{color:"#93C5FD",fontFamily:"'IBM Plex Mono',monospace",fontSize:9,letterSpacing:1,marginBottom:6}}>KEY PRINCIPLES</div>
+            {facePathInfo.principles.map((p,i)=>(
+              <div key={i} style={{display:"flex",gap:6,alignItems:"flex-start",marginBottom:5}}>
+                <div style={{width:4,height:4,borderRadius:"50%",background:GOLD,marginTop:5,flexShrink:0}}/>
+                <div style={{color:"#D1D5DB",fontSize:11,lineHeight:1.4}}>{p}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── WIND ARROW ────────────────────────────────────────────────────────────────
+function WindArrow({dir,mph}: {dir:string;mph:number}){
+  const a: Record<string,number>={N:0,NE:45,E:90,SE:135,S:180,SW:225,W:270,NW:315};
+  const angle=a[dir]||0;
+  return(
+    <div style={{position:"relative",width:48,height:48}}>
+      <div style={{width:48,height:48,borderRadius:"50%",border:"1px solid rgba(255,255,255,0.2)",background:"rgba(0,0,0,0.4)",
+        display:"flex",alignItems:"center",justifyContent:"center"}}>
+        <div style={{width:4,height:18,background:"#F87171",borderRadius:2,
+          transform:`rotate(${angle}deg)`,transformOrigin:"50% 100%",marginBottom:4}}/>
+      </div>
+      <div style={{position:"absolute",bottom:-2,right:-2,background:GOLD,borderRadius:3,padding:"1px 4px",
+        color:"#000",fontFamily:"'IBM Plex Mono',monospace",fontWeight:700,fontSize:8}}>{mph}</div>
+    </div>
+  );
+}
+
+// ── SCORECARD ────────────────────────────────────────────────────────────────
+export function ScorecardPanel(){
+  const {state,dispatch}=useGame();
+  const players = usePlayers();
+  const course=state.course;
+  const par=course.holes.reduce((s,h)=>s+h.par,0);
+  const [matchPlay,setMatchPlay]=useState(false);
+
+  const totals = players.map(pk =>
+    Object.values(state.scores[pk] || {}).reduce((s,h)=>s+(h.strokes||0),0)
+  );
+
+  const upd=(pl: PlayerKey,hn: number,delta: number)=>{
+    const cur=state.scores[pl]?.[hn]?.strokes||0;
+    dispatch({type:"SCORE",pl,hn,f:"strokes",v:Math.max(0,cur+delta)});
+  };
+
+  const nameOf = (pk: PlayerKey) => state.round?.players[PLAYER_KEYS.indexOf(pk)] || pk.toUpperCase();
+
+  // Match play calculations (works for 2+ players, compares each pair against p1)
+  const matchStatus = (() => {
+    if(players.length < 2) return null;
+    const results: {winner:PlayerKey|"halved";holeNum:number}[] = [];
+    let cumulativeScore = 0; // positive = p1 leads, negative = p2 leads
+    const holesRemaining = course.holes.length;
+
+    for(const hole of course.holes){
+      const s1 = state.scores[players[0]]?.[hole.number]?.strokes;
+      const s2 = state.scores[players[1]]?.[hole.number]?.strokes;
+      if(!s1 || !s2){ results.push({winner:"halved",holeNum:hole.number}); continue; }
+      if(s1 < s2){ cumulativeScore++; results.push({winner:players[0],holeNum:hole.number}); }
+      else if(s2 < s1){ cumulativeScore--; results.push({winner:players[1],holeNum:hole.number}); }
+      else { results.push({winner:"halved",holeNum:hole.number}); }
+    }
+
+    const holesPlayed = results.filter(r=>r.winner!=="halved" || (state.scores[players[0]]?.[r.holeNum]?.strokes && state.scores[players[1]]?.[r.holeNum]?.strokes)).length;
+    const holesLeft = holesRemaining - holesPlayed;
+    const leader = cumulativeScore > 0 ? players[0] : cumulativeScore < 0 ? players[1] : null;
+    const margin = Math.abs(cumulativeScore);
+    const dormie = margin === holesLeft && holesLeft > 0;
+    const closed = margin > holesLeft;
+
+    let statusText = "All Square";
+    if(leader){
+      const n = nameOf(leader);
+      if(closed) statusText = `${n} wins ${margin}&${holesLeft}`;
+      else if(dormie) statusText = `${n} ${margin} UP (Dormie)`;
+      else statusText = `${n} ${margin} UP`;
+    }
+
+    return { results, cumulativeScore, leader, margin, statusText, dormie, closed };
+  })();
+
+  const cols = `48px 36px ${players.map(()=>"1fr").join(" ")}`;
+
+  return(
+    <div style={{display:"flex",flexDirection:"column",height:"100%"}}>
+      {/* Mode toggle */}
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"8px 10px",
+        background:"#0A1628",borderBottom:"1px solid rgba(255,255,255,0.06)"}}>
+        <div style={{display:"flex",background:"rgba(255,255,255,0.06)",borderRadius:6,overflow:"hidden"}}>
+          <button onClick={()=>setMatchPlay(false)}
+            style={{padding:"5px 12px",border:"none",cursor:"pointer",fontSize:10,fontFamily:"'IBM Plex Mono',monospace",fontWeight:700,letterSpacing:0.5,
+              background:!matchPlay?NAVY:"transparent",color:!matchPlay?"#fff":"#6B7280"}}>STROKE</button>
+          <button onClick={()=>setMatchPlay(true)}
+            style={{padding:"5px 12px",border:"none",cursor:"pointer",fontSize:10,fontFamily:"'IBM Plex Mono',monospace",fontWeight:700,letterSpacing:0.5,
+              background:matchPlay?NAVY:"transparent",color:matchPlay?"#fff":"#6B7280"}}>MATCH PLAY</button>
+        </div>
+        {matchPlay && matchStatus && (
+          <div style={{color:matchStatus.leader?PLAYER_COLORS[matchStatus.leader]:GOLD,
+            fontFamily:"'IBM Plex Mono',monospace",fontSize:10,fontWeight:700}}>
+            {matchStatus.statusText}
+          </div>
+        )}
+      </div>
+
+      {/* Match play banner */}
+      {matchPlay && matchStatus && (
+        <div style={{background:`linear-gradient(135deg,${NAVY}ee,#0F2444)`,padding:"10px 14px",
+          borderBottom:`1px solid ${GOLD}30`,display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+          <div style={{display:"flex",alignItems:"center",gap:10}}>
+            <div style={{display:"flex",alignItems:"center",gap:6}}>
+              <div style={{width:10,height:10,borderRadius:"50%",background:PLAYER_COLORS[players[0]]}}/>
+              <span style={{color:PLAYER_COLORS[players[0]],fontFamily:"'IBM Plex Mono',monospace",fontSize:11,fontWeight:700}}>
+                {nameOf(players[0])}
+              </span>
+            </div>
+            <span style={{color:"#6B7280",fontSize:10}}>vs</span>
+            <div style={{display:"flex",alignItems:"center",gap:6}}>
+              <div style={{width:10,height:10,borderRadius:"50%",background:PLAYER_COLORS[players[1]]}}/>
+              <span style={{color:PLAYER_COLORS[players[1]],fontFamily:"'IBM Plex Mono',monospace",fontSize:11,fontWeight:700}}>
+                {nameOf(players[1])}
+              </span>
+            </div>
+          </div>
+          <div style={{background:`${GOLD}20`,border:`1px solid ${GOLD}60`,borderRadius:6,padding:"4px 10px",
+            fontFamily:"'IBM Plex Mono',monospace",fontSize:12,fontWeight:700,
+            color:matchStatus.leader?PLAYER_COLORS[matchStatus.leader]:GOLD}}>
+            {matchStatus.margin === 0 ? "AS" : `${matchStatus.margin} UP`}
+          </div>
+        </div>
+      )}
+
+      {/* Match play hole-by-hole results */}
+      {matchPlay && matchStatus && (
+        <div style={{display:"flex",gap:2,padding:"8px 10px",flexWrap:"wrap",borderBottom:"1px solid rgba(255,255,255,0.06)"}}>
+          {matchStatus.results.map((r,i)=>{
+            const s1 = state.scores[players[0]][r.holeNum]?.strokes;
+            const s2 = state.scores[players[1]][r.holeNum]?.strokes;
+            const played = s1 && s2;
+            const bg = !played ? "rgba(255,255,255,0.04)" :
+              r.winner === players[0] ? `${PLAYER_COLORS[players[0]]}30` :
+              r.winner === players[1] ? `${PLAYER_COLORS[players[1]]}30` : "rgba(255,255,255,0.08)";
+            const border = !played ? "rgba(255,255,255,0.08)" :
+              r.winner === players[0] ? PLAYER_COLORS[players[0]] :
+              r.winner === players[1] ? PLAYER_COLORS[players[1]] : "rgba(255,255,255,0.2)";
+            return(
+              <div key={i} style={{width:26,height:26,borderRadius:5,background:bg,border:`1px solid ${border}`,
+                display:"flex",alignItems:"center",justifyContent:"center",
+                fontFamily:"'IBM Plex Mono',monospace",fontSize:9,fontWeight:700,
+                color:!played?"#4B5563": r.winner==="halved"?"#9CA3AF":PLAYER_COLORS[r.winner as PlayerKey]}}>
+                {!played?"—":r.winner==="halved"?"½":r.winner===players[0]?"W":"L"}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Standard scorecard grid */}
+      <div style={{display:"grid",gridTemplateColumns:cols,background:"#0F2444",padding:"7px 10px",
+        borderRadius:matchPlay?"0":"8px 8px 0 0",borderBottom:"1px solid rgba(255,255,255,0.1)",gap:4}}>
+        {["HOLE","PAR",...players.map(nameOf)].map((h,i)=>(
+          <div key={i} style={{color:i>=2?PLAYER_COLORS[players[i-2]]:"#93C5FD",
+            fontFamily:"'IBM Plex Mono',monospace",fontSize:9,fontWeight:700,
+            letterSpacing:1,textAlign:i>1?"center":"left",
+            overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{h}</div>
+        ))}
+      </div>
+      <div style={{flex:1,overflowY:"auto"}}>
+        {course.holes.map((hole,idx)=>{
+          const cur=state.currentHole===hole.number;
+          return(
+            <div key={hole.number} onClick={()=>dispatch({type:"SET_HOLE",n:hole.number})}
+              style={{display:"grid",gridTemplateColumns:cols,padding:"9px 10px",gap:4,
+                alignItems:"center",cursor:"pointer",
+                background:cur?"rgba(27,58,107,0.4)":idx%2===0?"rgba(255,255,255,0.025)":"transparent",
+                borderLeft:cur?`3px solid ${GOLD}`:"3px solid transparent",
+                borderBottom:"1px solid rgba(255,255,255,0.04)"}}>
+              <div style={{fontFamily:"'IBM Plex Mono',monospace",color:cur?GOLD:"#fff",fontWeight:cur?700:400,fontSize:13}}>{hole.number}</div>
+              <div style={{fontFamily:"'IBM Plex Mono',monospace",color:"#9CA3AF",fontSize:12}}>{hole.par}</div>
+              {players.map(pk=>{
+                const strokes=state.scores[pk]?.[hole.number]?.strokes;
+                return(
+                  <ScoreCell key={pk} strokes={strokes} par={hole.par}
+                    color={PLAYER_COLORS[pk]}
+                    onI={()=>upd(pk,hole.number,1)}
+                    onD={()=>upd(pk,hole.number,-1)}/>
+                );
+              })}
+            </div>
+          );
+        })}
+      </div>
+      <div style={{display:"grid",gridTemplateColumns:cols,background:"#0F2444",padding:"9px 10px",gap:4,
+        borderRadius:"0 0 8px 8px",borderTop:`2px solid ${GOLD}55`}}>
+        <div style={{color:GOLD,fontFamily:"'IBM Plex Mono',monospace",fontSize:10,fontWeight:700,letterSpacing:1,gridColumn:"1/3"}}>TOTAL</div>
+        <div/>
+        {players.map((pk,i)=>{
+          const t=totals[i],d=t-par;
+          const c=d<0?"#4CAF50":d>0?"#F87171":"#fff";
+          return <div key={pk} style={{textAlign:"center",fontFamily:"'IBM Plex Mono',monospace",fontWeight:700,fontSize:15,color:c}}>
+            {t>0?t:"—"}{t>0&&d!==0&&<span style={{fontSize:10,marginLeft:3}}>({d>0?"+":""}{d})</span>}
+          </div>;
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ── SCORE CELL ─────────────────────────────────────────────────────────────────
+function ScoreCell({strokes,par,color,onI,onD}: {strokes:number|undefined;par:number;color:string;onI:()=>void;onD:()=>void}){
+  const info=strokes&&strokes>0?getScoreName(strokes,par):null;
+  const btn: React.CSSProperties={width:22,height:22,borderRadius:4,border:"none",background:"rgba(255,255,255,0.1)",
+    color:"#fff",fontSize:14,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0};
+  return(
+    <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:3}}>
+      <button style={btn} onClick={e=>{e.stopPropagation();onD();}}>−</button>
+      <div style={{minWidth:26,textAlign:"center",fontFamily:"'IBM Plex Mono',monospace",fontWeight:700,fontSize:14,
+        color:info?.c||color+"80"}}>
+        {strokes&&strokes>0?strokes:"—"}
+      </div>
+      <button style={btn} onClick={e=>{e.stopPropagation();onI();}}>+</button>
+    </div>
+  );
+}
+
+// ── STATS PANEL ────────────────────────────────────────────────────────────────
+function StatsPanel(){
+  const {state}=useGame();
+  const players = usePlayers();
+  const course=state.course;
+  const holesPlayed=Object.keys(state.scores.p1).length;
+
+  const avgDist=(shots: ShotRecord[])=>{
+    const dists=shots.filter(s=>s.dist>0).map(s=>s.dist);
+    return dists.length?Math.round(dists.reduce((a,b)=>a+b,0)/dists.length):0;
+  };
+  const maxDist=(shots: ShotRecord[])=>shots.length?Math.max(...shots.map(s=>s.dist||0)):0;
+  const nameOf = (pk: PlayerKey) => state.round?.players[PLAYER_KEYS.indexOf(pk)] || pk.toUpperCase();
+
+  return(
+    <div style={{display:"flex",flexDirection:"column",gap:10,overflowY:"auto"}}>
+      <div style={{color:"#93C5FD",fontFamily:"'IBM Plex Mono',monospace",fontSize:10,letterSpacing:1}}>
+        ROUND STATS — HOLES {holesPlayed}/{course.holes.length}
+      </div>
+
+      {players.map(pk=>{
+        const shots=Object.values(state.shots[pk]).flat();
+        const col=PLAYER_COLORS[pk];
+        return(
+          <div key={pk} style={{background:"rgba(255,255,255,0.04)",borderRadius:8,padding:"10px 12px",borderLeft:`3px solid ${col}`}}>
+            <div style={{color:col,fontFamily:"'IBM Plex Mono',monospace",fontSize:11,fontWeight:700,marginBottom:8}}>{nameOf(pk)}</div>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+              {([
+                ["Total Shots",shots.length],
+                ["Avg Distance",avgDist(shots)>0?`${avgDist(shots)}y`:"—"],
+                ["Longest Shot",maxDist(shots)>0?`${maxDist(shots)}y`:"—"],
+                ["Holes Played",Object.keys(state.scores[pk] || {}).filter(h=>(state.scores[pk] || {})[+h]?.strokes>0).length],
+              ] as [string, string|number][]).map(([label,val])=>(
+                <div key={label} style={{background:"rgba(0,0,0,0.2)",borderRadius:5,padding:"7px 10px"}}>
+                  <div style={{color:"#9CA3AF",fontSize:9,fontFamily:"'IBM Plex Mono',monospace",marginBottom:3}}>{label}</div>
+                  <div style={{color:"#fff",fontSize:18,fontWeight:700,fontFamily:"'IBM Plex Mono',monospace"}}>{val||"—"}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        );
+      })}
+
+      <div>
+        <div style={{color:"#93C5FD",fontFamily:"'IBM Plex Mono',monospace",fontSize:10,letterSpacing:1,marginBottom:8}}>SCORE VS PAR</div>
+        {course.holes.map(hole=>{
+          const scores = players.map(pk => state.scores[pk]?.[hole.number]?.strokes);
+          const maxScore = Math.max(...scores.map(s=>s||0), hole.par+2);
+          return(
+            <div key={hole.number} style={{marginBottom:6}}>
+              <div style={{display:"flex",justifyContent:"space-between",color:"#9CA3AF",fontSize:9,fontFamily:"'IBM Plex Mono',monospace",marginBottom:3}}>
+                <span>Hole {hole.number} (Par {hole.par})</span>
+                <span>{players.map((pk,i)=>scores[i]?`${nameOf(pk).slice(0,3)}:${scores[i]}`:"").filter(Boolean).join(" · ")}</span>
+              </div>
+              <div style={{height:6,background:"rgba(255,255,255,0.06)",borderRadius:3,position:"relative"}}>
+                <div style={{position:"absolute",left:`${(hole.par/maxScore)*100}%`,top:0,width:1,height:"100%",background:GOLD,opacity:0.6}}/>
+                {players.map((pk,i)=>{
+                  const s=scores[i];
+                  if(!s) return null;
+                  const topPct = i/(players.length);
+                  const heightPct = 1/players.length;
+                  return <div key={pk} style={{
+                    position:"absolute",left:0,
+                    top:`${topPct*100}%`,
+                    height:`${heightPct*100}%`,
+                    width:`${(s/maxScore)*100}%`,
+                    background:PLAYER_COLORS[pk],borderRadius:3,opacity:0.7
+                  }}/>;
+                })}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ── ROUND SCREEN ───────────────────────────────────────────────────────────────
+export default function RoundScreen(){
+  const {state,dispatch}=useGame();
+  const players = usePlayers();
+  const course=state.course;
+  const hole=course.holes.find(h=>h.number===state.currentHole)||course.holes[0];
+  const PANELS=[{id:"map",l:"Map"},{id:"club",l:"Club"},{id:"gapp",l:"GAPP"},{id:"ar",l:"AR Glasses"},{id:"stats",l:"Stats"},{id:"card",l:"Card"}];
+
+  useEffect(()=>{
+    fetchCourses().then(list=>{
+      const fresh=list.find(c=>c.slug===course.slug);
+      if(fresh && fresh.holes.length>course.holes.length){
+        dispatch({type:"SET_COURSE",course:fresh});
+      }
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[]);
+
+  const [shotFlash, setShotFlash]=useState(false);
+  const shotFlashTimer=useRef<ReturnType<typeof setTimeout>|null>(null);
+
+  const nameOf = (pk: PlayerKey) => state.round?.players[PLAYER_KEYS.indexOf(pk)] || pk.toUpperCase();
+
+  const handleHubShot=useCallback((shot: ShotDetectedPayload)=>{
+    const ballToPlayer: Record<string,PlayerKey> = {ball1:"p1",ball2:"p2",ball3:"p3",ball4:"p4"};
+    const targetPlayer = (shot.ballId && ballToPlayer[shot.ballId]) ? ballToPlayer[shot.ballId] : state.activePlayer;
+    const shotIndex = (state.shots[targetPlayer][state.currentHole]?.length || 0) + 1;
+    dispatch({
+      type:"ADD_SHOT",
+      pl: targetPlayer,
+      hn: state.currentHole,
+      sh: { x: shot.x, y: shot.y, dist: shot.distance, ts: shot.ts },
+    });
+    dispatch({ type:"SCORE", pl: targetPlayer, hn: state.currentHole, f:"strokes",
+      v: (state.scores[targetPlayer]?.[state.currentHole]?.strokes||0)+1 });
+
+    // Persist auto-detected shot to Supabase for analytics
+    if(state.roundId){
+      recordShot({
+        round_id: state.roundId,
+        ball_id: shot.ballId || "",
+        player_key: targetPlayer,
+        hole: state.currentHole,
+        shot_index: shotIndex,
+        x: shot.x, y: shot.y,
+        distance_yards: shot.distance,
+        gps_lat: shot.gps?.lat ?? null,
+        gps_lng: shot.gps?.lng ?? null,
+        cart_lat: shot.cart?.lat ?? null,
+        cart_lng: shot.cart?.lng ?? null,
+        cart_heading_deg: shot.cart?.headingDeg ?? null,
+      });
+    }
+
+    setShotFlash(true);
+    if(shotFlashTimer.current) clearTimeout(shotFlashTimer.current);
+    shotFlashTimer.current=setTimeout(()=>setShotFlash(false), 1400);
+  },[dispatch, state.activePlayer, state.currentHole, state.scores, state.shots, state.roundId]);
+
+  const { status: hubStatus, latency, ballPositions, cart }=useHubSocket({
+    activePlayer: state.activePlayer,
+    currentHole:  state.currentHole,
+    onShot:       handleHubShot,
+  });
+
+  // Auto-calculate distance from active player's UWB ball to the pin.
+  // Hole coords are normalized [0,1]; multiply the magnitude by hole.yards
+  // to convert to real yards along the hole's tee→pin axis.
+  const autoDistanceToPin: number | null = (()=>{
+    if(!ballPositions) return null;
+    const ballToPlayer: Record<string,PlayerKey> = {ball1:"p1",ball2:"p2",ball3:"p3",ball4:"p4"};
+    const ballId = (Object.keys(ballToPlayer) as Array<keyof typeof ballToPlayer>)
+      .find(b => ballToPlayer[b] === state.activePlayer);
+    const bp = ballId ? ballPositions[ballId] : undefined;
+    if(!bp) return null;
+    const dx = (hole.pin.x - bp.x);
+    const dy = (hole.pin.y - bp.y);
+    const norm = Math.sqrt(dx*dx + dy*dy);
+    const teeDx = hole.pin.x - hole.tee.x;
+    const teeDy = hole.pin.y - hole.tee.y;
+    const teeNorm = Math.sqrt(teeDx*teeDx + teeDy*teeDy) || 1;
+    return Math.round((norm / teeNorm) * hole.yards);
+  })();
+
+  return(
+    <div style={{minHeight:"100vh",display:"flex",flexDirection:"column",background:"#050E1A"}}>
+      {/* Topbar */}
+      <div style={{background:"#0A1628",borderBottom:"1px solid rgba(255,255,255,0.08)",padding:"8px 14px",
+        display:"flex",alignItems:"center",justifyContent:"space-between",flexShrink:0,gap:8}}>
+        <div style={{display:"flex",alignItems:"center",gap:8}}>
+          <span style={{color:GOLD,fontFamily:"'Rajdhani',sans-serif",fontWeight:700,fontSize:16,letterSpacing:1}}>⛳ VF</span>
+          <HubStatusDot status={hubStatus} latency={latency} shotFlash={shotFlash}/>
+        </div>
+
+        <div style={{display:"flex",alignItems:"center",gap:8}}>
+          <button onClick={()=>dispatch({type:"SET_HOLE",n:Math.max(1,state.currentHole-1)})}
+            disabled={state.currentHole===1}
+            style={{width:32,height:32,borderRadius:6,border:"none",background:"rgba(255,255,255,0.08)",
+              color:state.currentHole===1?"#374151":"#fff",cursor:state.currentHole===1?"not-allowed":"pointer",fontSize:12}}>◀</button>
+          <div style={{textAlign:"center",minWidth:90}}>
+            <div style={{color:GOLD,fontFamily:"'IBM Plex Mono',monospace",fontWeight:700,fontSize:13,letterSpacing:1}}>HOLE {hole.number}</div>
+            <div style={{color:"#9CA3AF",fontSize:10,fontFamily:"'IBM Plex Mono',monospace"}}>PAR {hole.par}  •  {hole.yards}Y</div>
+          </div>
+          <button onClick={()=>state.currentHole<course.holes.length?dispatch({type:"SET_HOLE",n:state.currentHole+1}):dispatch({type:"END"})}
+            style={{width:32,height:32,borderRadius:6,border:"none",background:state.currentHole===course.holes.length?GREEN:"rgba(255,255,255,0.08)",
+              color:"#fff",cursor:"pointer",fontSize:state.currentHole===course.holes.length?10:12,fontFamily:"'IBM Plex Mono',monospace"}}>
+            {state.currentHole===course.holes.length?"END":"▶"}
+          </button>
+        </div>
+
+        {/* Player selector */}
+        <div style={{display:"flex",alignItems:"center",gap:4,flexWrap:"wrap",justifyContent:"flex-end"}}>
+          {players.map(pk=>(
+            <button key={pk} onClick={()=>dispatch({type:"SET_PLAYER",p:pk})}
+              style={{padding:"4px 8px",borderRadius:5,border:"none",cursor:"pointer",fontSize:10,fontFamily:"'IBM Plex Mono',monospace",
+                background:state.activePlayer===pk?`${PLAYER_COLORS[pk]}25`:"rgba(255,255,255,0.06)",
+                color:state.activePlayer===pk?PLAYER_COLORS[pk]:"#9CA3AF",
+                outline:state.activePlayer===pk?`1px solid ${PLAYER_COLORS[pk]}60`:"none",
+                maxWidth:64,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
+              {nameOf(pk)}
+            </button>
+          ))}
+          <button onClick={()=>dispatch({type:"UNDO",pl:state.activePlayer,hn:hole.number})}
+            style={{padding:"4px 8px",borderRadius:5,border:"none",background:"rgba(239,68,68,0.15)",
+              color:"#F87171",cursor:"pointer",fontSize:10,fontFamily:"'IBM Plex Mono',monospace"}}>↩</button>
+        </div>
+      </div>
+
+      {/* Panel tabs */}
+      <div style={{display:"flex",background:"#0A1628",borderBottom:"1px solid rgba(255,255,255,0.06)",flexShrink:0}}>
+        {PANELS.map(p=>(
+          <button key={p.id} onClick={()=>dispatch({type:"SET_PANEL",p:p.id})}
+            style={{flex:1,padding:"10px 4px",border:"none",cursor:"pointer",fontSize:12,fontFamily:"'Rajdhani',sans-serif",fontWeight:600,letterSpacing:0.5,
+              background:"transparent",color:state.panel===p.id?"#fff":"#6B7280",
+              borderBottom:state.panel===p.id?`2px solid ${GOLD}`:"2px solid transparent",
+              transition:"all 0.15s"}}>
+            {p.l}
+          </button>
+        ))}
+      </div>
+
+      {/* Active panel */}
+      <div style={{flex:1,padding:12,overflowY:"auto"}}>
+        {state.panel==="map"  &&<ShotMap hole={hole} ballPositions={ballPositions} cart={cart}/>}
+        {state.panel==="club" &&<ClubPanel hole={hole} autoYards={autoDistanceToPin}/>}
+        {state.panel==="gapp" &&<GAPPPanel/>}
+        {state.panel==="ar"   &&<GlassesPanel
+          roundId={state.roundId}
+          hole={hole}
+          windMph={state.wind.mph}
+          windDir={state.wind.dir}
+          recommendedClub={recommendClub(autoDistanceToPin ?? hole.yards) || undefined}
+          distanceToPin={autoDistanceToPin ?? hole.yards}
+        />}
+        {state.panel==="stats"&&<StatsPanel/>}
+        {state.panel==="card" &&<ScorecardPanel/>}
+      </div>
+
+      {state.panel==="map" && <HubStatusBar status={hubStatus}/>}
+    </div>
+  );
+}
