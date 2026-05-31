@@ -34,7 +34,6 @@ export function AuthScreen() {
     } else {
       const err = await signUp(email, password);
       if (err) setError(err);
-      else setSuccess("Account created! You can now use the app.");
     }
     setLoading(false);
   };

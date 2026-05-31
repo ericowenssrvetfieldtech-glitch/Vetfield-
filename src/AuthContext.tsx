@@ -39,8 +39,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const signUp = useCallback(async (email: string, password: string): Promise<string | null> => {
-    const { error } = await supabase.auth.signUp({ email, password });
-    return error?.message ?? null;
+    const { data, error } = await supabase.auth.signUp({ email, password });
+    if (error) return error.message;
+    if (!data.session) {
+      const { error: signInErr } = await supabase.auth.signInWithPassword({ email, password });
+      if (signInErr) return signInErr.message;
+    }
+    return null;
   }, []);
 
   const signIn = useCallback(async (email: string, password: string): Promise<string | null> => {
