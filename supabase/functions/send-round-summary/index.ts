@@ -238,7 +238,7 @@ Deno.serve(async (req: Request) => {
             Authorization: `Bearer ${RESEND_API_KEY}`,
           },
           body: JSON.stringify({
-            from: "VetField Golf <onboarding@resend.dev>",
+            from: "VetField Golf <stats@vetfield.golf>",
             to: [payload.email],
             subject,
             html,
