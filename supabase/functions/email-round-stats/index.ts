@@ -415,7 +415,7 @@ Deno.serve(async (req: Request) => {
     const subject = `Round Stats - ${payload.courseName} (${payload.date})`;
     const errors: string[] = [];
 
-    const fromAddress = "VetField Golf <onboarding@resend.dev>";
+    const fromAddress = "VetField Golf <stats@vetfield.golf>";
 
     // Try Resend first (primary)
     if (RESEND_API_KEY) {
