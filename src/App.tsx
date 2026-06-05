@@ -89,7 +89,7 @@ export default function App(){
       <PersistenceBridge state={state}/>
       <div className="app">
         <button onClick={toggleFullscreen}
-          style={{position:"fixed",top:10,right:10,zIndex:9999,
+          style={{position:"fixed",top:10,left:10,zIndex:9999,
             width:32,height:32,borderRadius:6,border:"1px solid rgba(255,255,255,0.15)",
             background:"rgba(0,0,0,0.6)",backdropFilter:"blur(4px)",
             display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer"}}>
