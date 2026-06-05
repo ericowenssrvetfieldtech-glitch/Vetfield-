@@ -41,9 +41,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const signUp = useCallback(async (email: string, password: string): Promise<string | null> => {
     const { data, error } = await supabase.auth.signUp({ email, password });
     if (error) return error.message;
-    if (!data.session) {
+    if (data.session) return null;
+    // Auto-confirm trigger may need a moment to propagate; retry sign-in
+    for (let attempt = 0; attempt < 3; attempt++) {
+      await new Promise(r => setTimeout(r, 500 * (attempt + 1)));
       const { error: signInErr } = await supabase.auth.signInWithPassword({ email, password });
-      if (signInErr) return signInErr.message;
+      if (!signInErr) return null;
+      if (attempt === 2) return signInErr.message;
     }
     return null;
   }, []);
