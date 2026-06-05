@@ -67,7 +67,7 @@ function ReviewScreen(){
     try {
       const { data: { session } } = await supabase.auth.getSession();
       const token = session?.access_token || import.meta.env.VITE_SUPABASE_ANON_KEY;
-      const url = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/email-round-stats`;
+      const url = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/send-round-summary`;
       const res = await fetch(url, {
         method: "POST",
         headers: {
