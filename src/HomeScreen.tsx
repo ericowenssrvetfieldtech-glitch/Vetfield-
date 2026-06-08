@@ -291,6 +291,16 @@ function HomeScreen(){
           </button>
         </div>
 
+        <button onClick={()=>dispatch({type:"SET_VIEW",v:"swing"})}
+          style={{width:"100%",padding:"13px 16px",borderRadius:10,cursor:"pointer",
+            border:`1px solid ${GREEN}60`,background:`linear-gradient(135deg,rgba(46,125,50,0.12) 0%,rgba(15,36,68,0.4) 100%)`,
+            color:"#81C784",fontFamily:"'Rajdhani',sans-serif",fontWeight:600,fontSize:14,letterSpacing:1,
+            display:"flex",alignItems:"center",justifyContent:"center",gap:8,transition:"background 0.15s"}}
+          onMouseEnter={e=>(e.currentTarget.style.background="rgba(46,125,50,0.22)")}
+          onMouseLeave={e=>(e.currentTarget.style.background="linear-gradient(135deg,rgba(46,125,50,0.12) 0%,rgba(15,36,68,0.4) 100%)")}>
+          SWING ANALYZER
+        </button>
+
         <InstallButton/>
 
         <div style={{display:"flex",alignItems:"center",gap:8,color:"#4B5563",fontSize:11,fontFamily:"'IBM Plex Mono',monospace"}}>

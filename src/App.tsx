@@ -12,6 +12,7 @@ const RoundScreen = lazy(() => import("./RoundScreen"));
 const ReviewScreen = lazy(() => import("./ReviewScreen"));
 const HistoryScreen = lazy(() => import("./HistoryScreen"));
 const ProfileScreen = lazy(() => import("./ProfileScreen"));
+const SwingAnalyzerScreen = lazy(() => import("./SwingAnalyzerScreen"));
 
 const CSS = `
   @import url('https://fonts.googleapis.com/css2?family=Rajdhani:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;700&display=swap');
@@ -107,6 +108,7 @@ export default function App(){
           {state.view==="review"    &&<ReviewScreen/>}
           {state.view==="history"   &&<HistoryScreen/>}
           {state.view==="profile"   &&<ProfileScreen/>}
+          {state.view==="swing"     &&<SwingAnalyzerScreen/>}
         </Suspense>
       </div>
     </GameCtx.Provider>
