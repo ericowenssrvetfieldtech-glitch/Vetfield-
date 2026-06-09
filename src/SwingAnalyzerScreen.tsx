@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, useEffect } from "react";
+import { useState, useRef, useCallback, useEffect, useMemo } from "react";
 import { Activity, RotateCcw, ChevronLeft, Clock, Zap, TrendingUp, Watch, Smartphone, Bluetooth, BluetoothOff } from "lucide-react";
 import { NAVY, GOLD, GREEN } from "./constants";
 import { useGame } from "./gameStore";
@@ -46,6 +46,29 @@ interface WatchState {
 }
 
 const CLUBS = ["DR", "3W", "5W", "4I", "5I", "6I", "7I", "8I", "9I", "PW", "GW", "SW"];
+
+function generateDemoSamples(peakG: number): Sample[] {
+  const samples: Sample[] = [];
+  const totalMs = 2200;
+  const peakTime = 1400;
+  const count = 120;
+  for (let i = 0; i < count; i++) {
+    const t = (i / (count - 1)) * totalMs;
+    const progress = t / totalMs;
+    let mag: number;
+    if (t < peakTime * 0.5) {
+      mag = 9.8 + (t / (peakTime * 0.5)) * 8 + Math.sin(progress * 12) * 0.5;
+    } else if (t < peakTime) {
+      const ramp = (t - peakTime * 0.5) / (peakTime * 0.5);
+      mag = 17.8 + ramp * ramp * (peakG - 17.8) + Math.sin(progress * 20) * 0.8;
+    } else {
+      const decay = (t - peakTime) / (totalMs - peakTime);
+      mag = peakG * Math.exp(-decay * 3) + 9.8 * (1 - Math.exp(-decay * 3)) + Math.sin(progress * 8) * 0.3;
+    }
+    samples.push({ t, ax: mag * 0.7, ay: mag * 0.5, az: mag * 0.5, gx: progress * 200, gy: progress * 50, gz: progress * 30 });
+  }
+  return samples;
+}
 
 // Standard BLE UUIDs for motion/accelerometer services found on smartwatches
 const MOTION_SERVICE_UUID = "00001814-0000-1000-8000-00805f9b34fb"; // Running Speed & Cadence (common)
@@ -113,6 +136,8 @@ function SwingAnalyzerScreen() {
   const [countdown, setCountdown] = useState(0);
   const [hasSensor, setHasSensor] = useState(true);
   const [source, setSource] = useState<SensorSource>("phone");
+  const [recordedSamples, setRecordedSamples] = useState<Sample[]>([]);
+  const [ghost, setGhost] = useState<GhostData | null>(null);
   const [watch, setWatch] = useState<WatchState>({
     status: "disconnected", device: null, characteristic: null, error: null, battery: null,
   });
@@ -129,6 +154,10 @@ function SwingAnalyzerScreen() {
     if (!navigator.bluetooth) setHasBluetooth(false);
     loadHistory();
   }, []);
+
+  useEffect(() => {
+    setGhost(loadGhost(club));
+  }, [club]);
 
   const loadHistory = async () => {
     const { data } = await supabase
@@ -327,12 +356,17 @@ function SwingAnalyzerScreen() {
 
     setPhase("analyzing");
     setTimeout(() => {
-      const m = analyze(samplesRef.current);
+      const captured = [...samplesRef.current];
+      const m = analyze(captured);
       if (m) {
         const fullResult: SwingMetrics = { ...m, source };
         setResult(fullResult);
+        setRecordedSamples(captured);
         setPhase("result");
         saveSwing(fullResult);
+        const mags = samplesToMags(captured);
+        saveGhost(club, { mags, smoothness: m.smoothness, peakG: m.peakG, club });
+        setGhost(loadGhost(club));
       } else {
         setPhase("idle");
       }
@@ -384,8 +418,11 @@ function SwingAnalyzerScreen() {
       if (s >= 78 && t >= 2.5 && t <= 3.5) { rating = "Excellent"; ratingColor = "#4CAF50"; }
       else if (s >= 55) { rating = "Good"; ratingColor = "#93C5FD"; }
       else { rating = "Fair"; ratingColor = GOLD; }
+      const demoPeakG = +(24 + Math.random() * 12).toFixed(1);
+      const demoSamples = generateDemoSamples(demoPeakG);
+      setRecordedSamples(demoSamples);
       setResult({
-        peakG: +(24 + Math.random() * 12).toFixed(1),
+        peakG: demoPeakG,
         tempo: t,
         backswingMs: 600 + Math.floor(Math.random() * 250),
         downswingMs: 180 + Math.floor(Math.random() * 100),
@@ -393,6 +430,9 @@ function SwingAnalyzerScreen() {
         source: "phone",
       });
       setPhase("result");
+      const mags = samplesToMags(demoSamples);
+      saveGhost(club, { mags, smoothness: s, peakG: demoPeakG, club });
+      setGhost(loadGhost(club));
     }, 1000);
   };
 
@@ -581,6 +621,11 @@ function SwingAnalyzerScreen() {
                   </div>
                 </div>
 
+                {/* Swing Trace with Ghost */}
+                {recordedSamples.length > 10 && (
+                  <SwingTrace samples={recordedSamples} ghost={ghost} peakG={result.peakG} />
+                )}
+
                 {/* Metrics */}
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
                   <MetricCard icon={<Zap size={13} />} label="PEAK G-FORCE" value={`${result.peakG}g`} color="#93C5FD" />
@@ -692,6 +737,174 @@ function MiniStat({ label, value }: { label: string; value: string }) {
       <div style={{ color: "#fff", fontSize: 15, fontWeight: 700, fontFamily: "'Rajdhani',sans-serif" }}>{value}</div>
     </div>
   );
+}
+
+// ── Ghost Storage ────────────────────────────────────────────────────────────
+const GHOST_KEY = "vetfield.swing.bestGhost";
+
+interface GhostData {
+  mags: number[];
+  smoothness: number;
+  peakG: number;
+  club: string;
+}
+
+function loadGhost(club: string): GhostData | null {
+  try {
+    const raw = localStorage.getItem(GHOST_KEY);
+    if (!raw) return null;
+    const all: Record<string, GhostData> = JSON.parse(raw);
+    return all[club] || null;
+  } catch { return null; }
+}
+
+function saveGhost(club: string, data: GhostData) {
+  try {
+    const raw = localStorage.getItem(GHOST_KEY);
+    const all: Record<string, GhostData> = raw ? JSON.parse(raw) : {};
+    const existing = all[club];
+    if (!existing || data.smoothness > existing.smoothness) {
+      all[club] = data;
+      localStorage.setItem(GHOST_KEY, JSON.stringify(all));
+    }
+  } catch { /* ignore */ }
+}
+
+function samplesToMags(samples: Sample[]): number[] {
+  return samples.map(s => Math.sqrt(s.ax ** 2 + s.ay ** 2 + s.az ** 2));
+}
+
+// ── Swing Trace Visualization ────────────────────────────────────────────────
+function SwingTrace({ samples, ghost, peakG }: { samples: Sample[]; ghost: GhostData | null; peakG: number }) {
+  const mags = useMemo(() => samplesToMags(samples), [samples]);
+
+  const WIDTH = 320;
+  const HEIGHT = 140;
+  const PAD_X = 32;
+  const PAD_Y = 16;
+  const chartW = WIDTH - PAD_X * 2;
+  const chartH = HEIGHT - PAD_Y * 2;
+
+  const maxVal = Math.max(peakG + 2, 40);
+
+  const toPath = useCallback((data: number[]): string => {
+    if (data.length < 2) return "";
+    const stepX = chartW / (data.length - 1);
+    return data.map((v, i) => {
+      const x = PAD_X + i * stepX;
+      const y = PAD_Y + chartH - (v / maxVal) * chartH;
+      return `${i === 0 ? "M" : "L"}${x.toFixed(1)},${y.toFixed(1)}`;
+    }).join(" ");
+  }, [chartW, chartH, maxVal]);
+
+  const currentPath = useMemo(() => toPath(mags), [mags, toPath]);
+
+  const ghostPath = useMemo(() => {
+    if (!ghost) return "";
+    const resampled = resampleTo(ghost.mags, mags.length);
+    return toPath(resampled);
+  }, [ghost, mags.length, toPath]);
+
+  const peakIdx = mags.indexOf(Math.max(...mags));
+  const peakX = PAD_X + (peakIdx / (mags.length - 1)) * chartW;
+  const peakY = PAD_Y + chartH - (Math.max(...mags) / maxVal) * chartH;
+
+  const gridLines = [10, 20, 30].filter(v => v < maxVal);
+
+  return (
+    <div style={{ background: "rgba(255,255,255,0.03)", borderRadius: 10, padding: "12px 8px 8px", border: "1px solid rgba(255,255,255,0.06)" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "0 6px", marginBottom: 6 }}>
+        <span style={{ color: "#9CA3AF", fontFamily: "'IBM Plex Mono',monospace", fontSize: 9, letterSpacing: 1 }}>SWING TRACE</span>
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+            <div style={{ width: 12, height: 2, borderRadius: 1, background: "#60A5FA" }} />
+            <span style={{ color: "#60A5FA", fontFamily: "'IBM Plex Mono',monospace", fontSize: 8 }}>Current</span>
+          </div>
+          {ghost && (
+            <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+              <div style={{ width: 12, height: 2, borderRadius: 1, background: "#34D399", opacity: 0.5 }} />
+              <span style={{ color: "#34D399", fontFamily: "'IBM Plex Mono',monospace", fontSize: 8, opacity: 0.7 }}>Best</span>
+            </div>
+          )}
+        </div>
+      </div>
+
+      <svg viewBox={`0 0 ${WIDTH} ${HEIGHT}`} width="100%" height={HEIGHT} style={{ display: "block" }}>
+        {/* Grid */}
+        {gridLines.map(v => {
+          const y = PAD_Y + chartH - (v / maxVal) * chartH;
+          return (
+            <g key={v}>
+              <line x1={PAD_X} y1={y} x2={WIDTH - PAD_X} y2={y} stroke="rgba(255,255,255,0.06)" strokeWidth={0.5} strokeDasharray="3,3" />
+              <text x={PAD_X - 4} y={y + 3} fill="#4B5563" fontSize={7} fontFamily="'IBM Plex Mono',monospace" textAnchor="end">{v}g</text>
+            </g>
+          );
+        })}
+
+        {/* Baseline */}
+        <line x1={PAD_X} y1={PAD_Y + chartH} x2={WIDTH - PAD_X} y2={PAD_Y + chartH} stroke="rgba(255,255,255,0.08)" strokeWidth={0.5} />
+
+        {/* Ghost trace */}
+        {ghostPath && (
+          <path d={ghostPath} fill="none" stroke="#34D399" strokeWidth={1.5} strokeOpacity={0.3} strokeLinecap="round" strokeLinejoin="round" />
+        )}
+
+        {/* Current trace with glow */}
+        <path d={currentPath} fill="none" stroke="#60A5FA" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" filter="url(#traceGlow)">
+          <animate attributeName="stroke-dashoffset" from={`${chartW * 3}`} to="0" dur="1.2s" fill="freeze" />
+          <animate attributeName="stroke-dasharray" from={`0 ${chartW * 3}`} to={`${chartW * 3} 0`} dur="1.2s" fill="freeze" />
+        </path>
+
+        {/* Peak marker */}
+        <circle cx={peakX} cy={peakY} r={3.5} fill="#60A5FA" stroke="#fff" strokeWidth={1} opacity={0}>
+          <animate attributeName="opacity" from="0" to="1" begin="1s" dur="0.3s" fill="freeze" />
+        </circle>
+        <text x={peakX} y={peakY - 8} fill="#60A5FA" fontSize={8} fontFamily="'IBM Plex Mono',monospace" textAnchor="middle" opacity={0}>
+          {peakG}g
+          <animate attributeName="opacity" from="0" to="1" begin="1.1s" dur="0.3s" fill="freeze" />
+        </text>
+
+        {/* Glow filter */}
+        <defs>
+          <filter id="traceGlow" x="-20%" y="-20%" width="140%" height="140%">
+            <feGaussianBlur stdDeviation="2" result="blur" />
+            <feMerge>
+              <feMergeNode in="blur" />
+              <feMergeNode in="SourceGraphic" />
+            </feMerge>
+          </filter>
+        </defs>
+
+        {/* Time axis labels */}
+        <text x={PAD_X} y={HEIGHT - 2} fill="#4B5563" fontSize={7} fontFamily="'IBM Plex Mono',monospace">0ms</text>
+        <text x={WIDTH - PAD_X} y={HEIGHT - 2} fill="#4B5563" fontSize={7} fontFamily="'IBM Plex Mono',monospace" textAnchor="end">
+          {samples.length > 0 ? `${Math.round(samples[samples.length - 1].t)}ms` : ""}
+        </text>
+      </svg>
+
+      {ghost && (
+        <div style={{ marginTop: 6, padding: "6px 8px", borderRadius: 6, background: "rgba(52,211,153,0.05)", border: "1px solid rgba(52,211,153,0.1)", display: "flex", alignItems: "center", gap: 6 }}>
+          <TrendingUp size={10} color="#34D399" />
+          <span style={{ color: "#34D399", fontFamily: "'IBM Plex Mono',monospace", fontSize: 9, opacity: 0.8 }}>
+            Ghost: best {ghost.club} swing ({ghost.peakG}g, {ghost.smoothness}% smooth)
+          </span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function resampleTo(data: number[], targetLen: number): number[] {
+  if (data.length === targetLen) return data;
+  const result: number[] = [];
+  for (let i = 0; i < targetLen; i++) {
+    const srcIdx = (i / (targetLen - 1)) * (data.length - 1);
+    const lo = Math.floor(srcIdx);
+    const hi = Math.min(lo + 1, data.length - 1);
+    const frac = srcIdx - lo;
+    result.push(data[lo] * (1 - frac) + data[hi] * frac);
+  }
+  return result;
 }
 
 export default SwingAnalyzerScreen;
